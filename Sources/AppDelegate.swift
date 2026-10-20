@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .warning: 2
         case .critical: 3
         }
-        statusItem.button?.image = StatusIcon.menuBarImage(litBars: litBars, description: "内存压力：\(level.title)")
+        statusItem.button?.image = StatusIcon.menuBarImage(litBars: litBars, description: "Memory pressure: \(level.title)")
     }
 
     // MARK: Menu
@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let level = monitor.level
 
         let rows: [(label: String, value: String)] =
-            [("内存压力", level.title), ("Swap", gb(swap)), ("", "")]  // empty = separator
+            [("Memory Pressure", level.title), ("Swap", gb(swap)), ("", "")]  // empty = separator
             + entries.map { ($0.name, gb($0.bytes)) }
         let layout = RowView.Layout(rows)
 
@@ -60,17 +60,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
         if entries.isEmpty {
-            let none = NSMenuItem(title: "没有可显示的进程", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: "No processes to show", action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
         }
 
         menu.addItem(.separator())
-        let login = NSMenuItem(title: "开机启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
-        let quitSelf = NSMenuItem(title: "退出 Pressure", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitSelf = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitSelf)
     }
 
@@ -94,9 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 private extension PressureLevel {
     var title: String {
         switch self {
-        case .normal: "正常"
-        case .warning: "警告"
-        case .critical: "严重"
+        case .normal: "Normal"
+        case .warning: "Warning"
+        case .critical: "Critical"
         }
     }
 }
@@ -122,7 +122,7 @@ private final class RowView: NSView {
             valueWidth = rows.map { RowView.width($0.value, RowView.valueFont) }.max() ?? 0
         }
 
-        /// Minimum row width; the menu may be wider (e.g. "退出 Pressure ⌘Q"), and rows stretch to it.
+        /// Minimum row width; the menu may be wider (standard items reserve room for icons and shortcuts), and rows stretch to it.
         var minWidth: CGFloat { RowView.inset + labelWidth + 28 + valueWidth + RowView.inset }
     }
 
