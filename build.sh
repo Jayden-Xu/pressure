@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 NAME=Pressure
 BUNDLE_ID=com.jayden.pressure
-VERSION=1.0.0
+VERSION=1.0.1
 BUILD=$(date +%Y%m%d%H%M)
 MIN_OS=13.0
 # Pressure needs no TCC permission, so any identity works; a stable one keeps the login item
