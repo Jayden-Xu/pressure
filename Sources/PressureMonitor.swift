@@ -5,26 +5,50 @@ enum PressureLevel: Int {
     case normal = 1, warning = 2, critical = 4
 }
 
-/// Tracks the kernel's memory pressure level. No polling: the kernel pushes every change.
+/// Tracks the kernel's memory pressure level.
+///
+/// The memory pressure dispatch source alone is not enough: the kernel notifies processes largest
+/// first and stops once pressure eases, so a ~10 MB process like this one often never hears about
+/// a warning (measured: 3 normal↔warning transitions, 0 events). A slow sysctl check catches those.
 final class PressureMonitor {
     private(set) var level: PressureLevel
-    private let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+    private var lastSysctlLevel: PressureLevel
+    private let onChange: (PressureLevel) -> Void
+    private let events = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+    private let check = DispatchSource.makeTimerSource(queue: .main)
 
     init(onChange: @escaping (PressureLevel) -> Void) {
-        level = Self.currentLevel()
-        source.setEventHandler { [unowned self] in
-            // Use the event's level, not a fresh sysctl read: `memory_pressure -S` simulates
-            // by sending notifications without changing the sysctl value.
-            let event = source.data
-            level = event.contains(.critical) ? .critical : event.contains(.warning) ? .warning : .normal
-            onChange(level)
+        self.onChange = onChange
+        lastSysctlLevel = Self.sysctlLevel()
+        level = lastSysctlLevel
+
+        events.setEventHandler { [unowned self] in
+            // Trust the event's level: `memory_pressure -S` simulates by sending notifications
+            // without changing the sysctl value.
+            let event = events.data
+            update(event.contains(.critical) ? .critical : event.contains(.warning) ? .warning : .normal)
         }
-        source.activate()
+        events.activate()
+
+        // Only react when the sysctl value itself changes, so a simulated event isn't undone 10 s later.
+        // Large leeway lets the system batch this wakeup with others.
+        check.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(5))
+        check.setEventHandler { [unowned self] in
+            let current = Self.sysctlLevel()
+            guard current != lastSysctlLevel else { return }
+            lastSysctlLevel = current
+            update(current)
+        }
+        check.activate()
     }
 
-    /// The dispatch source only fires on transitions, so read the starting level once;
-    /// otherwise launching under pressure would show "normal" until the next change.
-    private static func currentLevel() -> PressureLevel {
+    private func update(_ new: PressureLevel) {
+        guard new != level else { return }
+        level = new
+        onChange(new)
+    }
+
+    private static func sysctlLevel() -> PressureLevel {
         var value: Int32 = 0
         var size = MemoryLayout<Int32>.size
         guard sysctlbyname("kern.memorystatus_vm_pressure_level", &value, &size, nil, 0) == 0 else { return .normal }
