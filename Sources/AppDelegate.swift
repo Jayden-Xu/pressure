@@ -47,22 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let swap = FootprintScanner.swapUsedBytes()
         let level = monitor.level
 
-        let rows: [(label: String, value: String, pid: pid_t?)] =
-            [("内存压力", level.title, nil), ("Swap", gb(swap), nil), ("", "", nil)]  // empty = separator
-            + entries.map { ($0.name, gb($0.bytes), $0.appPID) }
-        let quitButtons = { (pid: pid_t) in
-            [self.button("退出", #selector(self.quitApp(_:)), pid: pid), self.button("强制退出", #selector(self.forceQuitApp(_:)), pid: pid)]
-        }
-        let layout = RowView.Layout(rows.map { ($0.label, $0.value) },
-                                    buttons: entries.contains { $0.appPID != nil } ? quitButtons(0) : [])
+        let rows: [(label: String, value: String)] =
+            [("内存压力", level.title), ("Swap", gb(swap)), ("", "")]  // empty = separator
+            + entries.map { ($0.name, gb($0.bytes)) }
+        let layout = RowView.Layout(rows)
 
         menu.removeAllItems()
         for row in rows {
             guard !row.label.isEmpty else { menu.addItem(.separator()); continue }
-            // Processes outside a .app get no buttons: never kill background jobs from here.
-            let buttons = row.pid.map(quitButtons) ?? []
             let item = NSMenuItem()
-            item.view = RowView(label: row.label, value: row.value, buttons: buttons, layout: layout)
+            item.view = RowView(label: row.label, value: row.value, layout: layout)
             menu.addItem(item)
         }
         if entries.isEmpty {
@@ -80,32 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(quitSelf)
     }
 
-    private func button(_ title: String, _ action: Selector, pid: pid_t) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
-        button.controlSize = .small
-        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        button.tag = Int(pid)
-        button.sizeToFit()
-        return button
-    }
-
     private func gb(_ bytes: UInt64) -> String {
         String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
     }
 
     // MARK: Actions
-
-    /// Normal quit, like ⌘Q: the app saves state and may ask about unsaved documents.
-    @objc private func quitApp(_ sender: NSButton) {
-        menu.cancelTracking()
-        NSRunningApplication(processIdentifier: pid_t(sender.tag))?.terminate()
-    }
-
-    /// SIGKILL: ends at once, even a hung app; unsaved work is lost.
-    @objc private func forceQuitApp(_ sender: NSButton) {
-        menu.cancelTracking()
-        NSRunningApplication(processIdentifier: pid_t(sender.tag))?.forceTerminate()
-    }
 
     @objc private func toggleLaunchAtLogin() {
         let service = SMAppService.mainApp
@@ -128,70 +101,59 @@ private extension PressureLevel {
     }
 }
 
-/// A hand-drawn menu row: label, right-aligned value, optional inline buttons.
-/// Plain NSMenuItems can't do this: a disabled item is always drawn grey, whatever color its title asks for.
+/// A hand-drawn menu row: label and right-aligned value, in the normal text color.
+/// A plain NSMenuItem can't do this: a disabled item is always drawn grey, whatever color its title asks for,
+/// and an enabled one highlights on hover as if it were clickable.
 @MainActor
 private final class RowView: NSView {
     static let labelFont = NSFont.menuFont(ofSize: 0)
     static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: labelFont.pointSize, weight: .regular)
     static let inset: CGFloat = 14
     static let height: CGFloat = 24
-    // Push buttons draw their bezel ~6 pt inside their frame, so frames overlap to look 8 pt apart.
-    static let buttonGap: CGFloat = -4
 
-    /// Shared column widths so values and buttons line up across rows.
+    /// Shared column widths so values line up across rows.
     @MainActor
     struct Layout {
         let labelWidth: CGFloat
         let valueWidth: CGFloat
-        let buttonsWidth: CGFloat
 
-        /// `buttons` is one sample set (all app rows carry the same ones), empty if no row has any.
-        init(_ rows: [(label: String, value: String)], buttons: [NSButton]) {
+        init(_ rows: [(label: String, value: String)]) {
             labelWidth = min(220, rows.map { RowView.width($0.label, RowView.labelFont) }.max() ?? 0)
             valueWidth = rows.map { RowView.width($0.value, RowView.valueFont) }.max() ?? 0
-            buttonsWidth = buttons.isEmpty ? 0 : buttons.reduce(20) { $0 + $1.frame.width + RowView.buttonGap } - RowView.buttonGap
         }
 
         var valueRight: CGFloat { RowView.inset + labelWidth + 28 + valueWidth }
-        var totalWidth: CGFloat { valueRight + buttonsWidth + RowView.inset }
+        var totalWidth: CGFloat { valueRight + RowView.inset }
     }
 
-    init(label: String, value: String, buttons: [NSButton], layout: Layout) {
+    private let label: String
+    private let value: String
+    private let layout: Layout
+
+    init(label: String, value: String, layout: Layout) {
+        self.label = label
+        self.value = value
+        self.layout = layout
         super.init(frame: NSRect(x: 0, y: 0, width: layout.totalWidth, height: Self.height))
-        let labelField = Self.text(label, Self.labelFont)
-        labelField.lineBreakMode = .byTruncatingTail
-        labelField.frame = Self.centered(x: Self.inset, width: layout.labelWidth, height: labelField.fittingSize.height)
-        addSubview(labelField)
-
-        let valueField = Self.text(value, Self.valueFont)
-        valueField.alignment = .right
-        valueField.frame = Self.centered(x: layout.valueRight - layout.valueWidth, width: layout.valueWidth, height: valueField.fittingSize.height)
-        addSubview(valueField)
-
-        var x = layout.valueRight + 20
-        for button in buttons {
-            button.frame = Self.centered(x: x, width: button.frame.width, height: button.frame.height)
-            addSubview(button)
-            x += button.frame.width + Self.buttonGap
-        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private static func text(_ string: String, _ font: NSFont) -> NSTextField {
-        let field = NSTextField(labelWithString: string)
-        field.font = font
-        field.textColor = .labelColor
-        return field
-    }
-
-    private static func centered(x: CGFloat, width: CGFloat, height: CGFloat) -> NSRect {
-        NSRect(x: x, y: ((Self.height - height) / 2).rounded(), width: width, height: height)
+    // Drawn directly rather than with two NSTextFields per row: half the memory each time the menu opens.
+    override func draw(_ dirtyRect: NSRect) {
+        let truncate = NSMutableParagraphStyle()
+        truncate.lineBreakMode = .byTruncatingTail
+        let right = NSMutableParagraphStyle()
+        right.alignment = .right
+        let y = ((Self.height - Self.labelFont.boundingRectForFont.height) / 2).rounded()
+        let line = Self.labelFont.boundingRectForFont.height
+        (label as NSString).draw(in: NSRect(x: Self.inset, y: y, width: layout.labelWidth, height: line),
+                                 withAttributes: [.font: Self.labelFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: truncate])
+        (value as NSString).draw(in: NSRect(x: layout.valueRight - layout.valueWidth, y: y, width: layout.valueWidth, height: line),
+                                 withAttributes: [.font: Self.valueFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: right])
     }
 
     static func width(_ string: String, _ font: NSFont) -> CGFloat {
-        // +4: NSTextField's own text padding, without which it truncates.
-        ceil((string as NSString).size(withAttributes: [.font: font]).width) + 4
+        ceil((string as NSString).size(withAttributes: [.font: font]).width)
     }
 }

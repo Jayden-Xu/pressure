@@ -1,17 +1,15 @@
-import AppKit
+import Foundation
 
 /// One menu row: an app (every process inside its .app bundle, summed) or a process outside any .app.
 struct MemoryEntry {
     let name: String
     let bytes: UInt64
-    /// Main process of a running GUI app, used to quit it. nil means display only.
-    let appPID: pid_t?
 }
 
 /// Runs only when the menu opens. Nothing is cached, so every open shows fresh numbers.
 enum FootprintScanner {
     static func topEntries(limit: Int, excluding excluded: Set<String>) -> [MemoryEntry] {
-        var apps: [String: (bytes: UInt64, mainPIDs: [pid_t])] = [:]  // keyed by outermost .app path
+        var apps: [String: UInt64] = [:]  // bytes, keyed by outermost .app path
         var candidates: [(bytes: UInt64, app: String?, name: String)] = []
         var argsBuffer = [UInt8](repeating: 0, count: 64 * 1024)
 
@@ -23,31 +21,23 @@ enum FootprintScanner {
                 path = launched
             }
             if let path, let app = outermostApp(in: path) {
-                apps[app, default: (0, [])].bytes += bytes
-                if path.hasPrefix(app + "/Contents/MacOS/") { apps[app]!.mainPIDs.append(pid) }
+                apps[app, default: 0] += bytes
             } else {
                 let name = path.map { ($0 as NSString).lastPathComponent } ?? processName(of: pid)
                 candidates.append((bytes, nil, name))
             }
         }
-        for (app, group) in apps {
-            candidates.append((group.bytes, app, ((app as NSString).lastPathComponent as NSString).deletingPathExtension))
+        for (app, bytes) in apps {
+            candidates.append((bytes, app, displayName(of: app)))
         }
         candidates.sort { $0.bytes > $1.bytes }
 
-        // Resolve bundle IDs and GUI status lazily: only for rows that might be shown.
+        // Bundle IDs are read lazily: only for rows that might be shown.
         var result: [MemoryEntry] = []
         for c in candidates {
             guard result.count < limit else { break }
-            guard let app = c.app else {
-                result.append(MemoryEntry(name: c.name, bytes: c.bytes, appPID: nil))
-                continue
-            }
-            if let id = bundleID(of: app), excluded.contains(id) { continue }
-            let running = apps[app]!.mainPIDs.lazy
-                .compactMap { NSRunningApplication(processIdentifier: $0) }
-                .first { $0.bundleURL?.standardizedFileURL.path == app }
-            result.append(MemoryEntry(name: running?.localizedName ?? c.name, bytes: c.bytes, appPID: running?.processIdentifier))
+            if let app = c.app, let id = bundleID(of: app), excluded.contains(id) { continue }
+            result.append(MemoryEntry(name: c.name, bytes: c.bytes))
         }
         return result
     }
@@ -103,6 +93,12 @@ enum FootprintScanner {
     private static func outermostApp(in path: String) -> String? {
         guard let r = path.range(of: ".app/") else { return nil }
         return String(path[..<r.lowerBound]) + ".app"
+    }
+
+    /// Finder's localized name ("活动监视器"), without the extension even when Finder shows extensions.
+    private static func displayName(of app: String) -> String {
+        let name = FileManager.default.displayName(atPath: app)
+        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
     }
 
     /// Read Info.plist directly: `Bundle(path:)` caches every bundle it opens for the life of the process.
