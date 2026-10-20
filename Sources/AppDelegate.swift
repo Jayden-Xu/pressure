@@ -122,8 +122,8 @@ private final class RowView: NSView {
             valueWidth = rows.map { RowView.width($0.value, RowView.valueFont) }.max() ?? 0
         }
 
-        var valueRight: CGFloat { RowView.inset + labelWidth + 28 + valueWidth }
-        var totalWidth: CGFloat { valueRight + RowView.inset }
+        /// Minimum row width; the menu may be wider (e.g. "退出 Pressure ⌘Q"), and rows stretch to it.
+        var minWidth: CGFloat { RowView.inset + labelWidth + 28 + valueWidth + RowView.inset }
     }
 
     private let label: String
@@ -134,7 +134,9 @@ private final class RowView: NSView {
         self.label = label
         self.value = value
         self.layout = layout
-        super.init(frame: NSRect(x: 0, y: 0, width: layout.totalWidth, height: Self.height))
+        super.init(frame: NSRect(x: 0, y: 0, width: layout.minWidth, height: Self.height))
+        // Stretch with the menu so values sit at its right edge, in line with key equivalents.
+        autoresizingMask = .width
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -149,7 +151,7 @@ private final class RowView: NSView {
         let line = Self.labelFont.boundingRectForFont.height
         (label as NSString).draw(in: NSRect(x: Self.inset, y: y, width: layout.labelWidth, height: line),
                                  withAttributes: [.font: Self.labelFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: truncate])
-        (value as NSString).draw(in: NSRect(x: layout.valueRight - layout.valueWidth, y: y, width: layout.valueWidth, height: line),
+        (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.inset - layout.valueWidth, y: y, width: layout.valueWidth, height: line),
                                  withAttributes: [.font: Self.valueFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: right])
     }
 
