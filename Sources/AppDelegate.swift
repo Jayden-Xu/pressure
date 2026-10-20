@@ -70,7 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
-        let quitSelf = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // Own selector: macOS 26 auto-adds an ✕ symbol to items wired to terminate(_:).
+        let quitSelf = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+        quitSelf.target = self
         menu.addItem(quitSelf)
     }
 
@@ -79,6 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Actions
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
 
     @objc private func toggleLaunchAtLogin() {
         let service = SMAppService.mainApp
