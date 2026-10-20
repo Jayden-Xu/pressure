@@ -1,4 +1,4 @@
-// Exports the app icon: the menu bar gauge at "normal" fill on a dark rounded tile.
+// Exports the app icon: the menu bar chip at "normal" (one bar lit) on a dark rounded tile.
 // Compiled together with Sources/StatusIcon.swift so both icons share one drawing function.
 // build.sh runs: swiftc -parse-as-library Sources/StatusIcon.swift icon.swift → <tool> <out.iconset>
 import AppKit
@@ -48,7 +48,14 @@ enum IconExport {
                    ending: NSColor(srgbRed: 0.227, green: 0.247, blue: 0.290, alpha: 1))!
             .draw(in: tile, angle: 90)
 
-        let gauge = NSRect(x: 512 - 140, y: 512 - 290, width: 280, height: 580)
-        StatusIcon.drawGauge(in: gauge, fill: 1.0 / 3, outline: .white, liquid: .white)
+        // Soft glow, like Dimmer's bright window.
+        NSGraphicsContext.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowBlurRadius = 60
+        glow.shadowColor = NSColor(srgbRed: 0.85, green: 0.95, blue: 1, alpha: 0.45)
+        glow.set()
+        StatusIcon.drawChip(in: NSRect(x: 512 - 290, y: 512 - 290, width: 580, height: 580),
+                            litBars: 1, ink: .white, unlitAlpha: 0.22)
+        NSGraphicsContext.restoreGraphicsState()
     }
 }

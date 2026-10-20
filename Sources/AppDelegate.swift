@@ -30,12 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func showIcon(for level: PressureLevel) {
-        let fill: CGFloat = switch level {
-        case .normal: 1.0 / 3
-        case .warning: 2.0 / 3
-        case .critical: 1
+        let litBars = switch level {
+        case .normal: 1
+        case .warning: 2
+        case .critical: 3
         }
-        statusItem.button?.image = StatusIcon.menuBarImage(fill: fill, description: "内存压力：\(level.title)")
+        statusItem.button?.image = StatusIcon.menuBarImage(litBars: litBars, description: "内存压力：\(level.title)")
     }
 
     // MARK: Menu
