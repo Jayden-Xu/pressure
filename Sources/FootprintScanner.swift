@@ -1,45 +1,44 @@
 import Foundation
 
-/// One menu row: an app (every process inside its .app bundle, summed) or a process outside any .app.
+/// Who the system holds responsible for a process: the app it was started from, whether as a helper,
+/// an XPC service (Safari for its WebKit web content) or a command typed in a terminal (Ghostty for claude).
+/// Activity Monitor groups processes the same way. Exported by libquarantine in libSystem.
+@_silgen_name("responsibility_get_pid_responsible_for_pid")
+private func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
+
+/// One menu row: an app and every process it is responsible for, summed.
 struct MemoryEntry {
     let name: String
     let bytes: UInt64
 }
 
-/// Runs only when the menu opens. Nothing is cached, so every open shows fresh numbers.
+/// Runs only when the menu opens. Nothing is cached across opens, so every open shows fresh numbers.
 enum FootprintScanner {
-    static func topEntries(limit: Int, excluding excluded: Set<String>) -> [MemoryEntry] {
-        var apps: [String: UInt64] = [:]  // bytes, keyed by outermost .app path
-        var candidates: [(bytes: UInt64, app: String?, name: String)] = []
-        var argsBuffer = [UInt8](repeating: 0, count: 64 * 1024)
+    static func topEntries(limit: Int) -> [MemoryEntry] {
+        var apps: [String: UInt64] = [:]   // bytes, keyed by outermost .app path
+        var appOf: [pid_t: String?] = [:]  // responsible pids repeat, so each is looked up once
+        var pathBuffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))  // PROC_PIDPATHINFO_MAXSIZE
+
+        func app(of pid: pid_t) -> String? {
+            if let cached = appOf[pid] { return cached }
+            let app = outermostApp(of: pid, buffer: &pathBuffer)
+            appOf[pid] = app
+            return app
+        }
 
         for pid in allPIDs() where pid > 0 {
             // Processes of other users (root, _windowserver…) fail here and are skipped.
             guard let bytes = footprint(of: pid) else { continue }
-            var path = executablePath(of: pid)
-            if path.flatMap({ outermostApp(in: $0) }) == nil, let launched = launchPath(of: pid, buffer: &argsBuffer) {
-                path = launched
-            }
-            if let path, let app = outermostApp(in: path) {
-                apps[app, default: 0] += bytes
-            } else {
-                let name = path.map { ($0 as NSString).lastPathComponent } ?? processName(of: pid)
-                candidates.append((bytes, nil, name))
-            }
+            let responsible = responsibility_get_pid_responsible_for_pid(pid)
+            // Processes belonging to no app (system daemons such as mdworker) are not shown.
+            guard let app = (responsible > 0 ? app(of: responsible) : nil) ?? app(of: pid) else { continue }
+            apps[app, default: 0] += bytes
         }
-        for (app, bytes) in apps {
-            candidates.append((bytes, app, displayName(of: app)))
-        }
-        candidates.sort { $0.bytes > $1.bytes }
 
-        // Bundle IDs are read lazily: only for rows that might be shown.
-        var result: [MemoryEntry] = []
-        for c in candidates {
-            guard result.count < limit else { break }
-            if let app = c.app, let id = bundleID(of: app), excluded.contains(id) { continue }
-            result.append(MemoryEntry(name: c.name, bytes: c.bytes))
+        // Display names are read lazily: only for rows that are shown.
+        return apps.sorted { $0.value > $1.value }.prefix(limit).map {
+            MemoryEntry(name: displayName(of: $0.key), bytes: $0.value)
         }
-        return result
     }
 
     static func swapUsedBytes() -> UInt64 {
@@ -68,42 +67,21 @@ enum FootprintScanner {
         return status == 0 ? info.ri_phys_footprint : nil
     }
 
-    private static func executablePath(of pid: pid_t) -> String? {
-        var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))  // PROC_PIDPATHINFO_MAXSIZE
-        return proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 ? String(cString: buf) : nil
-    }
-
-    /// Path the process was started from. Differs from proc_pidpath when the binary was moved after
-    /// launch: Warp's self-update moves the running binary out of Warp.app to ".../old".
-    private static func launchPath(of pid: pid_t, buffer: inout [UInt8]) -> String? {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var size = buffer.count
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > 4 else { return nil }
-        // Layout: Int32 argc, then the NUL-terminated exec path.
-        let path = buffer[4..<size].prefix { $0 != 0 }
-        return path.isEmpty ? nil : String(decoding: path, as: UTF8.self)
-    }
-
-    private static func processName(of pid: pid_t) -> String {
-        var buf = [CChar](repeating: 0, count: 256)
-        return proc_name(pid, &buf, UInt32(buf.count)) > 0 ? String(cString: buf) : "pid \(pid)"
-    }
-
-    /// Outermost bundle wins, so helpers nested deep inside (Chrome's Helper.app) count toward the app itself.
-    private static func outermostApp(in path: String) -> String? {
-        guard let r = path.range(of: ".app/") else { return nil }
-        return String(path[..<r.lowerBound]) + ".app"
+    /// Outermost .app containing the process's binary. Outermost wins, so helpers nested deep inside
+    /// (Chrome's Helper.app) count toward the app itself. Searched in the C string, so processes outside
+    /// any app (most of them) never become Swift strings.
+    private static func outermostApp(of pid: pid_t, buffer: inout [CChar]) -> String? {
+        buffer.withUnsafeMutableBufferPointer { buf -> String? in
+            guard let base = buf.baseAddress, proc_pidpath(pid, base, UInt32(buf.count)) > 0,
+                  let match = strstr(base, ".app/") else { return nil }
+            match[4] = 0  // keep ".app", drop the rest
+            return String(cString: base)
+        }
     }
 
     /// Finder's localized name ("活动监视器"), without the extension even when Finder shows extensions.
     private static func displayName(of app: String) -> String {
         let name = FileManager.default.displayName(atPath: app)
         return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
-    }
-
-    /// Read Info.plist directly: `Bundle(path:)` caches every bundle it opens for the life of the process.
-    private static func bundleID(of app: String) -> String? {
-        let plist = NSDictionary(contentsOfFile: app + "/Contents/Info.plist")
-        return plist?["CFBundleIdentifier"] as? String
     }
 }

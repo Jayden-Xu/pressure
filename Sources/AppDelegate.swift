@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)
     func menuNeedsUpdate(_ menu: NSMenu) {
-        let entries = FootprintScanner.topEntries(limit: Config.topN, excluding: Config.excludedBundleIDs)
+        let entries = FootprintScanner.topEntries(limit: Config.topN)
         let swap = FootprintScanner.swapUsedBytes()
         let level = monitor.level
 
@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
         if entries.isEmpty {
-            let none = NSMenuItem(title: "No processes to show", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: "No apps to show", action: nil, keyEquivalent: "")
             none.isEnabled = false
             menu.addItem(none)
         }

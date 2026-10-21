@@ -22,7 +22,7 @@ swiftc -O -swift-version 5 -parse-as-library \
   -framework AppKit -framework ServiceManagement \
   Sources/*.swift -o "$APP/Contents/MacOS/$NAME"
 
-# icon.swift reuses StatusIcon.drawGauge; regenerate only when either file changes.
+# icon.swift reuses StatusIcon.drawChip; regenerate only when either file changes.
 ICON=build/AppIcon.icns
 if [ ! -f "$ICON" ] || [ icon.swift -nt "$ICON" ] || [ Sources/StatusIcon.swift -nt "$ICON" ]; then
   echo "==> Drawing icon"

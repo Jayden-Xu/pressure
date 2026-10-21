@@ -7,7 +7,7 @@ kern.memorystatus_vm_pressure_level ──(启动 + 每 10 s)──┐
 DispatchSource 内存压力事件 ──────────(收到时)──────────┴─▶ PressureMonitor ─▶ 菜单栏图标
 
 点开菜单 ─▶ FootprintScanner ─┬─ proc_listpids → proc_pid_rusage(ri_phys_footprint)
-                             │    → 按最外层 .app 聚合 → 排除 excludedBundleIDs → Top N
+                             │    → 按 responsible App 聚合 → Top N
                              └─ sysctl vm.swapusage
 ```
 
@@ -24,12 +24,13 @@ App 图标由 `icon.swift` 和 `Sources/StatusIcon.swift` 一起编译导出，�
 ## 使用
 
 - 图标是一枚内存芯片，里面三格随等级点亮：1 格正常，2 格警告，3 格严重。单色模板图，跟随菜单栏深浅色。
-- 菜单：压力等级、Swap 用量、内存占用 Top N（App 的所有子进程合计；不在 `.app` 里的进程按进程名单列）。只显示，不提供退出。
+- 菜单：压力等级、Swap 用量、内存占用 Top N 的 App。只显示，不提供退出。
+  每个进程归给系统记录的 responsible 进程所在的 App（和活动监视器的分组一致）：App 自己的 helper、它用到的 XPC 服务
+  （如 Safari 的 WebKit 网页进程）、在终端里敲的命令（Ghostty 里的 claude）都算进对应 App。不属于任何 App 的系统进程不显示。
 - 配置（重新打开菜单即生效）：
 
 ```bash
 defaults write com.jayden.pressure topN -int 3
-defaults write com.jayden.pressure excludedBundleIDs -array com.apple.Terminal com.mitchellh.ghostty
 ```
 
 ## 设计取舍
@@ -44,6 +45,7 @@ defaults write com.jayden.pressure excludedBundleIDs -array com.apple.Terminal c
 
 ## 已知限制
 
-- Safari 等 WebKit 网页进程在 `/System/Library/...` 下的 `.xpc` 里，不在 Safari.app 内，会按进程名单独列出。
+- App 合计是各进程 footprint 直接相加。共享的脏内存只记在一个进程名下，所以不会重复计入：实测与 `footprint -p …` 多进程去重后的总数相差 0–2 MB。
+- `responsibility_get_pid_responsible_for_pid` 是 libSystem 里的私有符号，无公开文档。
 - 菜单行是自绘的 view：系统菜单里不可点的行一律画成灰色，没法改色。
 - 读不到其他用户（root 等）的进程，`WindowServer`、`kernel_task` 不会出现。
