@@ -19,11 +19,11 @@ DispatchSource 内存压力事件 ──────────(收到时)─�
 
 `swiftc -O` 编译 → 拼装 `build/Pressure.app` → 签名 → 复制到 `~/Applications/Pressure.app` 并重启。
 需要 Xcode Command Line Tools，目标 macOS 13+，无第三方依赖。
-App 图标由 `icon.swift` 和 `Sources/StatusIcon.swift` 一起编译导出，两者共用同一个芯片绘制函数。
+App 图标由 `icon.swift` 和 `Sources/StatusIcon.swift` 一起编译导出，两者共用同一个仪表盘绘制函数。
 
 ## 使用
 
-- 图标是一枚内存芯片，里面三格随等级点亮：1 格正常，2 格警告，3 格严重。单色模板图，跟随菜单栏深浅色。
+- 图标是一个压力表：240° 粗弧分三段，从左往右随等级点亮：1 段正常，2 段警告，3 段严重，未点亮段半透明。单色模板图，跟随菜单栏深浅色。
 - 菜单：压力等级、Swap 用量、内存占用 Top N 的 App。只显示，不提供退出。
   每个进程归给系统记录的 responsible 进程所在的 App（和活动监视器的分组一致）：App 自己的 helper、它用到的 XPC 服务
   （如 Safari 的 WebKit 网页进程）、在终端里敲的命令（Ghostty 里的 claude）都算进对应 App。不属于任何 App 的系统进程不显示。

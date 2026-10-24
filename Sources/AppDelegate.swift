@@ -30,12 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func showIcon(for level: PressureLevel) {
-        let litBars = switch level {
+        let litSegments = switch level {
         case .normal: 1
         case .warning: 2
         case .critical: 3
         }
-        statusItem.button?.image = StatusIcon.menuBarImage(litBars: litBars, description: "Memory pressure: \(level.title)")
+        statusItem.button?.image = StatusIcon.menuBarImage(litSegments: litSegments, description: "Memory pressure: \(level.title)")
     }
 
     // MARK: Menu
