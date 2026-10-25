@@ -19,7 +19,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -O -swift-version 5 -parse-as-library \
   -target "$(uname -m)-apple-macos$MIN_OS" \
   -sdk "$(xcrun --show-sdk-path)" \
-  -framework AppKit -framework ServiceManagement \
+  -framework AppKit -framework Carbon -framework ServiceManagement \
   Sources/*.swift -o "$APP/Contents/MacOS/$NAME"
 
 # icon.swift reuses StatusIcon.drawChip; regenerate only when either file changes.

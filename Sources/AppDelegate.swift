@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import ServiceManagement
 
 @main
@@ -7,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
     private var monitor: PressureMonitor!
+    private var hotKey: HotKey?
 
     static func main() {
         let app = NSApplication.shared
@@ -27,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             MainActor.assumeIsolated { self?.showIcon(for: level) }
         }
         showIcon(for: monitor.level)
+
+        // ⌃⌥⌘P opens the menu, same as clicking the icon.
+        hotKey = HotKey(keyCode: kVK_ANSI_P, modifiers: cmdKey | optionKey | controlKey) { [weak self] in
+            // Async: let the Carbon handler return before the menu's tracking loop starts.
+            DispatchQueue.main.async { self?.statusItem.button?.performClick(nil) }
+        }
     }
 
     private func showIcon(for level: PressureLevel) {
