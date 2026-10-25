@@ -58,15 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // App bars show the share of physical memory: the same ruler on every open.
         let ram = Double(ProcessInfo.processInfo.physicalMemory)
-        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: Double($0.bytes) / ram) }
-        let layout = RowView.Layout(rows.map { ($0.label, $0.value) }, inset: inset)
+        let swap: (label: String, value: String, share: Double?) = ("Swap", gb(FootprintScanner.swapUsedBytes()), nil)
+        let apps = entries.map { (label: $0.name, value: gb($0.bytes), share: Optional(Double($0.bytes) / ram)) }
+        let layout = RowView.Layout(([swap] + apps).map { ($0.label, $0.value) }, inset: inset)
 
         menu.removeAllItems()
+        // Pressure and swap together, then the apps.
         let header = NSMenuItem()
-        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()), inset: inset)
+        header.view = HeaderView(level: monitor.level, inset: inset)
         menu.addItem(header)
-        menu.addItem(.separator())
-        for row in rows {
+        for row in [swap, nil] + apps.map(Optional.some) {
+            guard let row else { menu.addItem(.separator()); continue }
             let item = NSMenuItem()
             item.view = RowView(label: row.label, value: row.value, share: row.share, layout: layout)
             menu.addItem(item)
@@ -141,44 +143,34 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header, terminal style, the gauge drawn as in the menu bar:
+/// Menu header: the menu bar gauge, large and centered, with the level in its open bottom.
 ///
-///     PRESSURE              SWAP
-///     ◜◝ NORMAL           0.4 GB
+///       ◜‾‾◝
+///      NORMAL
 @MainActor
 private final class HeaderView: NSView {
     private let level: PressureLevel
-    private let swap: String
     private let inset: CGFloat
+    static let gauge: CGFloat = 80
 
-    init(level: PressureLevel, swap: String, inset: CGFloat) {
+    init(level: PressureLevel, inset: CGFloat) {
         self.level = level
-        self.swap = swap
         self.inset = inset
-        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 62))
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 100))
         autoresizingMask = .width
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let x = inset, right = bounds.maxX - RowView.trailing
-        let caption = mono(9, .semibold, Ink.text, kern: 1.5)
-        let value = mono(17, .medium, Ink.text, kern: 0.5)
-
-        NSAttributedString(string: "PRESSURE", attributes: caption).draw(at: NSPoint(x: x, y: 40))
-        drawRight(NSAttributedString(string: "SWAP", attributes: caption), right: right, y: 40)
-
-        StatusIcon.drawGauge(in: NSRect(x: x, y: 9, width: 22, height: 22), litSegments: level.segments,
+        // Centered on the content column, which starts at the titles and ends at the separators.
+        let mid = ((inset + bounds.maxX - RowView.trailing) / 2).rounded()
+        let g = Self.gauge
+        StatusIcon.drawGauge(in: NSRect(x: mid - g / 2, y: 18, width: g, height: g), litSegments: level.segments,
                              ink: Ink.lit, unlitAlpha: Ink.unlitAlpha)
-        NSAttributedString(string: level.title, attributes: value).draw(at: NSPoint(x: x + 30, y: 9))
-        drawRight(NSAttributedString(string: swap, attributes: value), right: right, y: 9)
-    }
-
-    private func drawRight(_ text: NSAttributedString, right: CGFloat, y: CGFloat) {
-        // Kern also follows the last glyph; drop it so the text ends flush with the separators.
-        let kern = text.attribute(.kern, at: 0, effectiveRange: nil) as? CGFloat ?? 0
-        text.draw(at: NSPoint(x: right - text.size().width + kern, y: y))
+        let text = NSAttributedString(string: level.title, attributes: mono(13, .medium, Ink.text, kern: 1))
+        // Kern also follows the last glyph; leave it out when centering.
+        text.draw(at: NSPoint(x: (mid - (text.size().width - 1) / 2).rounded(), y: 8))
     }
 }
 
@@ -229,16 +221,16 @@ private final class RowView: NSView {
 
     private let label: String
     private let value: String
-    /// Fraction of physical memory.
-    private let share: Double
+    /// Fraction of physical memory; nil = no bar.
+    private let share: Double?
     private let layout: Layout
 
-    init(label: String, value: String, share: Double, layout: Layout) {
+    init(label: String, value: String, share: Double?, layout: Layout) {
         self.label = label
         self.value = value
         self.share = share
         self.layout = layout
-        super.init(frame: NSRect(x: 0, y: 0, width: layout.minWidth, height: Self.height))
+        super.init(frame: NSRect(x: 0, y: 0, width: layout.minWidth, height: share == nil ? Self.textHeight + 2 : Self.height))
         // Stretch with the menu so values sit at its right edge, in line with key equivalents.
         autoresizingMask = .width
     }
@@ -257,6 +249,7 @@ private final class RowView: NSView {
         (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.trailing - layout.valueWidth, y: vy, width: layout.valueWidth, height: line),
                                  withAttributes: Self.valueAttributes)
 
+        guard let share else { return }
         // Segment edges rounded to whole points so every segment is equally crisp.
         let x0 = layout.inset, width = bounds.maxX - Self.trailing - x0
         let n = Self.segments, step = (width + Self.segmentGap) / CGFloat(n)
