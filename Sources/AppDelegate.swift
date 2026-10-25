@@ -128,11 +128,9 @@ private extension PressureLevel {
     }
 }
 
-/// Restrained greys: black at low alpha on the light menu (white on a dark one), never full contrast.
+/// Text is the system's label color; only the gauge and bars are grey (black at low alpha on the light menu).
 @MainActor private enum Ink {
-    static let text = NSColor.labelColor.withAlphaComponent(0.68)
-    static let value = NSColor.labelColor.withAlphaComponent(0.52)
-    static let caption = NSColor.labelColor.withAlphaComponent(0.4)
+    static let text = NSColor.labelColor
     /// Segments, lit and unlit: the menu bar gauge's two tones, lightened.
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
@@ -165,7 +163,7 @@ private final class HeaderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let x = inset, right = bounds.maxX - RowView.trailing
-        let caption = mono(9, .semibold, Ink.caption, kern: 1.5)
+        let caption = mono(9, .semibold, Ink.text, kern: 1.5)
         let value = mono(17, .medium, Ink.text, kern: 0.5)
 
         NSAttributedString(string: "PRESSURE", attributes: caption).draw(at: NSPoint(x: x, y: 40))
@@ -174,7 +172,7 @@ private final class HeaderView: NSView {
         StatusIcon.drawGauge(in: NSRect(x: x, y: 9, width: 22, height: 22), litSegments: level.segments,
                              ink: Ink.lit, unlitAlpha: Ink.unlitAlpha)
         NSAttributedString(string: level.title, attributes: value).draw(at: NSPoint(x: x + 30, y: 9))
-        drawRight(NSAttributedString(string: swap, attributes: mono(17, .medium, Ink.value, kern: 0.5)), right: right, y: 9)
+        drawRight(NSAttributedString(string: swap, attributes: value), right: right, y: 9)
     }
 
     private func drawRight(_ text: NSAttributedString, right: CGFloat, y: CGFloat) {
@@ -208,7 +206,7 @@ private final class RowView: NSView {
     static let valueAttributes: [NSAttributedString.Key: Any] = {
         let right = NSMutableParagraphStyle()
         right.alignment = .right
-        return [.font: valueFont, .foregroundColor: Ink.value, .paragraphStyle: right]
+        return [.font: valueFont, .foregroundColor: Ink.text, .paragraphStyle: right]
     }()
 
     /// Shared column widths so values line up across rows.
