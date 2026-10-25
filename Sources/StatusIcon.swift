@@ -6,9 +6,9 @@ import AppKit
 enum StatusIcon {
     /// Geometry on a 16-unit grid; the arc's bounding box is centered in the square.
     enum Grid {
-        static let centerY: CGFloat = 6.25
-        static let outerRadius: CGFloat = 7, innerRadius: CGFloat = 4
-        static let startAngle: CGFloat = 210, sweep: CGFloat = 240, gap: CGFloat = 11  // degrees
+        static let centerY: CGFloat = 6
+        static let outerRadius: CGFloat = 8, innerRadius: CGFloat = 4.6
+        static let startAngle: CGFloat = 210, sweep: CGFloat = 240, gap: CGFloat = 8  // degrees
     }
 
     /// Draws the gauge into `rect` (square) in the current graphics context.
@@ -48,7 +48,7 @@ enum StatusIcon {
         rep.size = size
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        drawGauge(in: NSRect(origin: .zero, size: size), litSegments: litSegments, ink: NSColor(deviceWhite: 0, alpha: 1), unlitAlpha: 0.3)
+        drawGauge(in: NSRect(origin: .zero, size: size), litSegments: litSegments, ink: NSColor(deviceWhite: 0, alpha: 1), unlitAlpha: 0.4)
         NSGraphicsContext.restoreGraphicsState()
 
         let image = NSImage(size: size)
