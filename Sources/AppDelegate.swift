@@ -38,22 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func showIcon(for level: PressureLevel) {
-        let litSegments = switch level {
-        case .normal: 1
-        case .warning: 2
-        case .critical: 3
-        }
-        statusItem.button?.image = StatusIcon.menuBarImage(litSegments: litSegments, description: "Memory pressure: \(level.title.capitalized)")
+        statusItem.button?.image = StatusIcon.menuBarImage(litSegments: level.segments, description: "Memory pressure: \(level.title.capitalized)")
     }
 
     // MARK: Menu
 
+    /// Only the biggest consumers.
+    private static let topN = 3
+
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)
     func menuNeedsUpdate(_ menu: NSMenu) {
-        let entries = FootprintScanner.topEntries(limit: Config.topN)
-        let swap = FootprintScanner.swapUsedBytes()
-        let level = monitor.level
+        let entries = FootprintScanner.topEntries(limit: Self.topN)
 
         // Titles start 16 pt in, or 24 pt once any item shows a checkmark (the state column).
         // Separators always end 16 pt from the right. The hand-drawn rows follow the titles.
@@ -62,18 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // App bars show the share of physical memory: the same ruler on every open.
         let ram = Double(ProcessInfo.processInfo.physicalMemory)
-        let rows: [(label: String, value: String, share: Double?)] =
-            [("Swap", gb(swap), nil), ("", "", nil)]  // empty = separator
-            + entries.map { ($0.name, gb($0.bytes), Double($0.bytes) / ram) }
+        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: Double($0.bytes) / ram) }
         let layout = RowView.Layout(rows.map { ($0.label, $0.value) }, inset: inset)
 
         menu.removeAllItems()
         let header = NSMenuItem()
-        header.view = HeaderView(level: level, inset: inset)
+        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()), inset: inset)
         menu.addItem(header)
         menu.addItem(.separator())
         for row in rows {
-            guard !row.label.isEmpty else { menu.addItem(.separator()); continue }
             let item = NSMenuItem()
             item.view = RowView(label: row.label, value: row.value, share: row.share, layout: layout)
             menu.addItem(item)
@@ -125,7 +118,7 @@ private extension PressureLevel {
         }
     }
 
-    /// Lit segments, as in the menu bar gauge.
+    /// Lit gauge segments, in the menu bar and the menu header.
     var segments: Int {
         switch self {
         case .normal: 1
@@ -135,47 +128,64 @@ private extension PressureLevel {
     }
 }
 
-/// Dark grey on a light menu, light grey on a dark one.
-@MainActor private let ink = NSColor.labelColor.withAlphaComponent(0.7)
+/// Restrained greys: black at low alpha on the light menu (white on a dark one), never full contrast.
+@MainActor private enum Ink {
+    static let text = NSColor.labelColor.withAlphaComponent(0.68)
+    static let value = NSColor.labelColor.withAlphaComponent(0.52)
+    static let caption = NSColor.labelColor.withAlphaComponent(0.4)
+    /// Segments, lit and unlit: the menu bar gauge's two tones, lightened.
+    static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
+    static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
+    static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
+}
 
 private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, kern: CGFloat = 0) -> [NSAttributedString.Key: Any] {
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header, terminal style:
+/// Menu header, terminal style, the gauge drawn as in the menu bar:
 ///
-///     MEMORY PRESSURE
-///     NORMAL
-///     ▮▮▮▮▮▮▮▮  ▯▯▯▯▯▯▯▯  ▯▯▯▯▯▯▯▯
+///     PRESSURE              SWAP
+///     ◜◝ NORMAL           0.4 GB
 @MainActor
 private final class HeaderView: NSView {
     private let level: PressureLevel
+    private let swap: String
     private let inset: CGFloat
 
-    init(level: PressureLevel, inset: CGFloat) {
+    init(level: PressureLevel, swap: String, inset: CGFloat) {
         self.level = level
+        self.swap = swap
         self.inset = inset
-        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 86))
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 62))
         autoresizingMask = .width
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let x = inset, w = bounds.width - x - 16
-        NSAttributedString(string: "MEMORY PRESSURE", attributes: mono(10, .semibold, .secondaryLabelColor, kern: 1.5))
-            .draw(at: NSPoint(x: x, y: 62))
-        NSAttributedString(string: level.title, attributes: mono(30, .medium, ink, kern: 1))
-            .draw(at: NSPoint(x: x - 1, y: 20))
-        let gap: CGFloat = 4, seg = (w - 2 * gap) / 3
-        for i in 0..<3 {
-            (i < level.segments ? ink : NSColor.quaternaryLabelColor).setFill()
-            NSRect(x: x + CGFloat(i) * (seg + gap), y: 10, width: seg, height: 6).fill()
-        }
+        let x = inset, right = bounds.maxX - RowView.trailing
+        let caption = mono(9, .semibold, Ink.caption, kern: 1.5)
+        let value = mono(17, .medium, Ink.text, kern: 0.5)
+
+        NSAttributedString(string: "PRESSURE", attributes: caption).draw(at: NSPoint(x: x, y: 40))
+        drawRight(NSAttributedString(string: "SWAP", attributes: caption), right: right, y: 40)
+
+        StatusIcon.drawGauge(in: NSRect(x: x, y: 9, width: 22, height: 22), litSegments: level.segments,
+                             ink: Ink.lit, unlitAlpha: Ink.unlitAlpha)
+        NSAttributedString(string: level.title, attributes: value).draw(at: NSPoint(x: x + 30, y: 9))
+        drawRight(NSAttributedString(string: swap, attributes: mono(17, .medium, Ink.value, kern: 0.5)), right: right, y: 9)
+    }
+
+    private func drawRight(_ text: NSAttributedString, right: CGFloat, y: CGFloat) {
+        // Kern also follows the last glyph; drop it so the text ends flush with the separators.
+        let kern = text.attribute(.kern, at: 0, effectiveRange: nil) as? CGFloat ?? 0
+        text.draw(at: NSPoint(x: right - text.size().width + kern, y: y))
     }
 }
 
-/// A hand-drawn menu row: label in the menu font, value right-aligned in grey mono.
+/// A hand-drawn menu row: app name, value right-aligned in mono, and a segmented bar below,
+/// cut like the menu bar gauge.
 /// A plain NSMenuItem can't do this: a disabled item is always drawn grey, whatever color its title asks for,
 /// and an enabled one highlights on hover as if it were clickable.
 @MainActor
@@ -184,7 +194,22 @@ private final class RowView: NSView {
     static let valueFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
-    static let height: CGFloat = 24
+    static let textHeight: CGFloat = 22
+    static let height: CGFloat = textHeight + 9
+    /// Bar: 20 segments, so one segment is 5% of physical memory.
+    static let segments = 20, segmentGap: CGFloat = 2, barHeight: CGFloat = 3
+
+    // Built once, not on every draw.
+    static let labelAttributes: [NSAttributedString.Key: Any] = {
+        let truncate = NSMutableParagraphStyle()
+        truncate.lineBreakMode = .byTruncatingTail
+        return [.font: labelFont, .foregroundColor: Ink.text, .paragraphStyle: truncate]
+    }()
+    static let valueAttributes: [NSAttributedString.Key: Any] = {
+        let right = NSMutableParagraphStyle()
+        right.alignment = .right
+        return [.font: valueFont, .foregroundColor: Ink.value, .paragraphStyle: right]
+    }()
 
     /// Shared column widths so values line up across rows.
     @MainActor
@@ -206,16 +231,16 @@ private final class RowView: NSView {
 
     private let label: String
     private let value: String
-    /// Fraction of physical memory, drawn as a thin bar under the text; nil = no bar.
-    private let share: Double?
+    /// Fraction of physical memory.
+    private let share: Double
     private let layout: Layout
 
-    init(label: String, value: String, share: Double?, layout: Layout) {
+    init(label: String, value: String, share: Double, layout: Layout) {
         self.label = label
         self.value = value
         self.share = share
         self.layout = layout
-        super.init(frame: NSRect(x: 0, y: 0, width: layout.minWidth, height: share == nil ? Self.height : Self.height + 9))
+        super.init(frame: NSRect(x: 0, y: 0, width: layout.minWidth, height: Self.height))
         // Stretch with the menu so values sit at its right edge, in line with key equivalents.
         autoresizingMask = .width
     }
@@ -224,26 +249,26 @@ private final class RowView: NSView {
 
     // Drawn directly rather than with two NSTextFields per row: half the memory each time the menu opens.
     override func draw(_ dirtyRect: NSRect) {
-        let truncate = NSMutableParagraphStyle()
-        truncate.lineBreakMode = .byTruncatingTail
-        let right = NSMutableParagraphStyle()
-        right.alignment = .right
         let line = Self.labelFont.boundingRectForFont.height
-        // With a bar, the text sits in the top 24 pt and the bar below it.
-        let y = ((Self.height - line) / 2).rounded() + bounds.height - Self.height
+        // Text in the top part, bar below it.
+        let y = ((Self.textHeight - line) / 2).rounded() + bounds.height - Self.textHeight
         (label as NSString).draw(in: NSRect(x: layout.inset, y: y, width: layout.labelWidth, height: line),
-                                 withAttributes: [.font: Self.labelFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: truncate])
+                                 withAttributes: Self.labelAttributes)
         // Mono value, baseline-matched to the label.
         let vy = y + Self.labelFont.descender - Self.valueFont.descender
         (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.trailing - layout.valueWidth, y: vy, width: layout.valueWidth, height: line),
-                                 withAttributes: [.font: Self.valueFont, .foregroundColor: ink, .paragraphStyle: right])
+                                 withAttributes: Self.valueAttributes)
 
-        guard let share else { return }
-        let track = NSRect(x: layout.inset, y: 5, width: bounds.maxX - Self.trailing - layout.inset, height: 2)
-        NSColor.quaternaryLabelColor.setFill()
-        track.fill()
-        ink.setFill()
-        NSRect(x: track.minX, y: track.minY, width: max(2, track.width * min(1, share)), height: track.height).fill()
+        // Segment edges rounded to whole points so every segment is equally crisp.
+        let x0 = layout.inset, width = bounds.maxX - Self.trailing - x0
+        let n = Self.segments, step = (width + Self.segmentGap) / CGFloat(n)
+        let lit = max(1, Int((share * Double(n)).rounded()))
+        for i in 0..<n {
+            let left = (x0 + CGFloat(i) * step).rounded()
+            let right = (x0 + CGFloat(i + 1) * step - Self.segmentGap).rounded()
+            (i < lit ? Ink.lit : Ink.unlit).setFill()
+            NSRect(x: left, y: 6, width: right - left, height: Self.barHeight).fill()
+        }
     }
 
     static func width(_ string: String, _ font: NSFont) -> CGFloat {
