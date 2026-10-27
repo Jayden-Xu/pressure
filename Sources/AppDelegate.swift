@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.removeAllItems()
         let header = NSMenuItem()
-        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()))
+        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()), inset: inset)
         menu.addItem(header)
         menu.addItem(.separator())
         for row in rows {
@@ -141,24 +141,26 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header, like dimmer's: the gauge as a half ring as wide as the separators, the text inside.
+/// Menu header: the menu bar's gauge, small, over the level; the swap in large mono over its label.
+/// Each half of the menu centers its own column.
 ///
-///      ◜‾‾‾‾‾‾‾‾‾‾‾‾◝
-///     ◜    WARNING     ◝
-///     |     1.2 GB     |
-///     |      SWAP      |
+///      ◜‾◝       1.2 GB
+///     WARNING      SWAP
 ///
-/// The menu bar gauge's three segments, cut square with 3 pt gaps like dimmer's rings.
+/// The gauge's three segments are cut square with 3 pt gaps, like the bars below.
 @MainActor
 private final class HeaderView: NSView {
     private let level: PressureLevel
     private let swap: String
-    /// 94 pt radius: 16…204 in a 220 pt menu, like the separators.
-    private static let radius: CGFloat = 94, thickness: CGFloat = 12, gap: CGFloat = 3, height: CGFloat = 110
+    /// Where the menu's titles start, so the columns split the same span as the rows.
+    private let inset: CGFloat
+    private static let radius: CGFloat = 26, thickness: CGFloat = 8, gap: CGFloat = 3, sweep: CGFloat = 240
+    private static let height: CGFloat = 74
 
-    init(level: PressureLevel, swap: String) {
+    init(level: PressureLevel, swap: String, inset: CGFloat) {
         self.level = level
         self.swap = swap
+        self.inset = inset
         super.init(frame: NSRect(x: 0, y: 0, width: 220, height: Self.height))
         autoresizingMask = .width
     }
@@ -166,11 +168,14 @@ private final class HeaderView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let r = Self.radius, w = Self.thickness, c = NSPoint(x: bounds.midX, y: 10)
-        // Three segments over 180°, lit from the left; each gap is 3 pt across the ring, not a fixed angle.
-        let gapDeg = Self.gap / (r - w / 2) * 180 / .pi, seg = (180 - 2 * gapDeg) / 3
+        let left = inset, right = bounds.maxX - RowView.trailing
+        let x1 = left + (right - left) / 4, x2 = left + (right - left) * 3 / 4
+
+        // Three segments over 240°, open at the bottom, lit clockwise from the left.
+        let r = Self.radius, w = Self.thickness, c = NSPoint(x: x1, y: 42)
+        let gapDeg = Self.gap / (r - w / 2) * 180 / .pi, seg = (Self.sweep - 2 * gapDeg) / 3
         for i in 0..<3 {
-            let a0 = 180 - CGFloat(i) * (seg + gapDeg), a1 = a0 - seg
+            let a0 = 90 + Self.sweep / 2 - CGFloat(i) * (seg + gapDeg), a1 = a0 - seg
             let p = NSBezierPath()
             p.appendArc(withCenter: c, radius: r, startAngle: a0, endAngle: a1, clockwise: true)
             p.appendArc(withCenter: c, radius: r - w, startAngle: a1, endAngle: a0, clockwise: false)
@@ -178,11 +183,11 @@ private final class HeaderView: NSView {
             (i < level.segments ? Ink.lit : Ink.unlit).setFill()
             p.fill()
         }
-        // Baselines like dimmer's: SWAP on the ring's bottom edge, the 28 pt value 22 above, the level 4 above that.
+        // Labels share one baseline; the 28 pt value sits level with the gauge's lower ends.
         let label = mono(11, .medium, Ink.text, kern: 1)
-        Self.center(NSAttributedString(string: "SWAP", attributes: label), x: c.x, baseline: c.y)
-        Self.center(Self.value(swap), x: c.x, baseline: c.y + 22)
-        Self.center(NSAttributedString(string: level.title, attributes: label), x: c.x, baseline: c.y + 54)
+        Self.center(NSAttributedString(string: level.title, attributes: label), x: x1, baseline: 8)
+        Self.center(NSAttributedString(string: "SWAP", attributes: label), x: x2, baseline: 8)
+        Self.center(Self.value(swap), x: x2, baseline: 29)
     }
 
     /// "0.9 GB" as a large number with the unit small on its baseline, like dimmer's "38 MIN".
