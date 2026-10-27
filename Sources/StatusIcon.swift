@@ -8,12 +8,15 @@ enum StatusIcon {
     enum Grid {
         static let centerY: CGFloat = 6
         static let outerRadius: CGFloat = 8, innerRadius: CGFloat = 4.6
+        /// The menu bar's ring is thicker: the gauge already spans the full 16 pt width, so weight is the only room left.
+        static let menuBarInnerRadius: CGFloat = 3.4
         static let startAngle: CGFloat = 210, sweep: CGFloat = 240, gap: CGFloat = 8  // degrees
     }
 
     /// Draws the gauge into `rect` (square) in the current graphics context.
     /// `litShadow`, if set, is applied to the lit segments only (the app icon's glow).
-    static func drawGauge(in rect: NSRect, litSegments: Int, ink: NSColor, unlitAlpha: CGFloat, litShadow: NSShadow? = nil) {
+    static func drawGauge(in rect: NSRect, litSegments: Int, ink: NSColor, unlitAlpha: CGFloat,
+                          innerRadius: CGFloat = Grid.innerRadius, litShadow: NSShadow? = nil) {
         let u = rect.width / 16
         let center = NSPoint(x: rect.midX, y: rect.minY + Grid.centerY * u)
         let segment = (Grid.sweep - 2 * Grid.gap) / 3
@@ -21,7 +24,7 @@ enum StatusIcon {
             let a0 = Grid.startAngle - CGFloat(i) * (segment + Grid.gap), a1 = a0 - segment
             let path = NSBezierPath()
             path.appendArc(withCenter: center, radius: Grid.outerRadius * u, startAngle: a0, endAngle: a1, clockwise: true)
-            path.appendArc(withCenter: center, radius: Grid.innerRadius * u, startAngle: a1, endAngle: a0, clockwise: false)
+            path.appendArc(withCenter: center, radius: innerRadius * u, startAngle: a1, endAngle: a0, clockwise: false)
             path.close()
             NSGraphicsContext.saveGraphicsState()
             if i < litSegments {
@@ -48,7 +51,8 @@ enum StatusIcon {
         rep.size = size
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        drawGauge(in: NSRect(origin: .zero, size: size), litSegments: litSegments, ink: NSColor(deviceWhite: 0, alpha: 1), unlitAlpha: 0.4)
+        drawGauge(in: NSRect(origin: .zero, size: size), litSegments: litSegments, ink: NSColor(deviceWhite: 0, alpha: 1), unlitAlpha: 0.4,
+                  innerRadius: Grid.menuBarInnerRadius)
         NSGraphicsContext.restoreGraphicsState()
 
         let image = NSImage(size: size)
