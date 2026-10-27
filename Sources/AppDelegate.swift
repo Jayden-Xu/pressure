@@ -141,7 +141,7 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header, like dimmer's: the gauge as a half ring as wide as the separators, the text inside.
+/// Menu header, laid out like dimmer's but smaller (no inner ring to make room for): the gauge as a half ring as wide as the separators, the text inside.
 ///
 ///      ◜‾‾‾‾‾‾‾‾‾‾‾‾◝
 ///     ◜    WARNING     ◝
@@ -153,13 +153,13 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
 private final class HeaderView: NSView {
     private let level: PressureLevel
     private let swap: String
-    /// 94 pt radius: 16…204 in a 220 pt menu, like the separators.
-    private static let radius: CGFloat = 94, thickness: CGFloat = 12, gap: CGFloat = 3, height: CGFloat = 110
+    /// 84 pt radius: 16…184 in a 200 pt menu, like the separators.
+    private static let radius: CGFloat = 84, thickness: CGFloat = 12, gap: CGFloat = 3, height: CGFloat = 100
 
     init(level: PressureLevel, swap: String) {
         self.level = level
         self.swap = swap
-        super.init(frame: NSRect(x: 0, y: 0, width: 220, height: Self.height))
+        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: Self.height))
         autoresizingMask = .width
     }
 
@@ -237,15 +237,21 @@ private final class RowView: NSView {
         let labelWidth: CGFloat
         let valueWidth: CGFloat
 
+        /// The menu stays this wide, as wide as the header's ring; long names are cut short instead.
+        static let menuWidth: CGFloat = 200
+        /// Least space between a name and its value.
+        static let gap: CGFloat = 16
+
         /// `inset`: where the menu's titles start.
         init(_ rows: [(label: String, value: String)], inset: CGFloat) {
             self.inset = inset
-            labelWidth = min(220, rows.map { RowView.width($0.label, RowView.labelFont) }.max() ?? 0)
             valueWidth = rows.map { RowView.width($0.value, RowView.valueFont) }.max() ?? 0
+            let room = Self.menuWidth - inset - Self.gap - valueWidth - RowView.trailing
+            labelWidth = min(room, rows.map { RowView.width($0.label, RowView.labelFont) }.max() ?? 0)
         }
 
-        /// Minimum row width; the menu may be wider (standard items reserve room for icons and shortcuts), and rows stretch to it.
-        var minWidth: CGFloat { max(220, inset + labelWidth + 28 + valueWidth + RowView.trailing) }
+        /// Row width; the menu may be wider (standard items reserve room for icons and shortcuts), and rows stretch to it.
+        var minWidth: CGFloat { max(Self.menuWidth, inset + labelWidth + Self.gap + valueWidth + RowView.trailing) }
     }
 
     private let label: String
