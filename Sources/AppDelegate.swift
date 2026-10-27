@@ -145,11 +145,11 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header: the menu bar's gauge, small, over the level; the swap in large mono over its label,
-/// the unit in the label so the number centers on its own. Each half of the menu centers its column.
+/// Menu header: the menu bar's gauge over the level at the left edge, the swap in large mono over
+/// its label at the right edge, the unit in the label — like the rows' label left, value right.
 ///
-///      ◜‾◝        1.2
-///     WARNING    SWAP GB
+///     ◜‾‾◝         1.2
+///     WARNING   SWAP GB
 ///
 /// The gauge's three segments are cut square with 3 pt gaps, like the bars below.
 @MainActor
@@ -159,8 +159,8 @@ private final class HeaderView: NSView {
     private let swap: String
     /// Where the menu's titles start, so the columns split the same span as the rows.
     private let inset: CGFloat
-    private static let radius: CGFloat = 26, thickness: CGFloat = 8, gap: CGFloat = 3, sweep: CGFloat = 240
-    private static let height: CGFloat = 74
+    private static let radius: CGFloat = 32, thickness: CGFloat = 10, gap: CGFloat = 3, sweep: CGFloat = 240
+    private static let height: CGFloat = 80
 
     init(level: PressureLevel, swap: String, inset: CGFloat) {
         self.level = level
@@ -174,10 +174,10 @@ private final class HeaderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let left = inset, right = bounds.maxX - RowView.trailing
-        let x1 = left + (right - left) / 4, x2 = left + (right - left) * 3 / 4
 
         // Three segments over 240°, open at the bottom, lit clockwise from the left.
-        let r = Self.radius, w = Self.thickness, c = NSPoint(x: x1, y: 42)
+        // Its lower ends sit 16 above the labels' baseline.
+        let r = Self.radius, w = Self.thickness, c = NSPoint(x: left + r, y: 24 + r / 2)
         let gapDeg = Self.gap / (r - w / 2) * 180 / .pi, seg = (Self.sweep - 2 * gapDeg) / 3
         for i in 0..<3 {
             let a0 = 90 + Self.sweep / 2 - CGFloat(i) * (seg + gapDeg), a1 = a0 - seg
@@ -188,18 +188,20 @@ private final class HeaderView: NSView {
             (i < level.segments ? Ink.lit : Ink.unlit).setFill()
             p.fill()
         }
-        // Labels share one baseline; the 34 pt value stands about as tall as the gauge, centered on it.
+        // Labels share one baseline; the 34 pt value is centered on the gauge's height.
         let label = mono(11, .medium, Ink.text, kern: 1)
-        Self.center(NSAttributedString(string: level.title, attributes: label), x: x1, baseline: 8)
-        Self.center(NSAttributedString(string: "SWAP GB", attributes: label), x: x2, baseline: 8)
-        Self.center(NSAttributedString(string: swap, attributes: mono(34, .medium, Ink.text, kern: 0.5)), x: x2, baseline: 34)
+        Self.place(NSAttributedString(string: level.title, attributes: label), x: left, baseline: 8, anchor: 0)
+        Self.place(NSAttributedString(string: "SWAP GB", attributes: label), x: right, baseline: 8, anchor: 1)
+        Self.place(NSAttributedString(string: swap, attributes: mono(34, .medium, Ink.text, kern: 0.5)),
+                   x: right, baseline: c.y + r / 4 - 12, anchor: 1)
     }
 
-    /// Centered on `x` with the first font's baseline at `baseline`. Kern also follows the last glyph; leave it out.
-    private static func center(_ text: NSAttributedString, x: CGFloat, baseline: CGFloat) {
+    /// Draws `text` with its first font's baseline at `baseline`; `anchor` 0 starts it at `x`, 1 ends it there.
+    /// Kern also follows the last glyph; leave it out so right-aligned text ends flush.
+    private static func place(_ text: NSAttributedString, x: CGFloat, baseline: CGFloat, anchor: CGFloat) {
         let kern = text.attribute(.kern, at: max(0, text.length - 1), effectiveRange: nil) as? CGFloat ?? 0
         let descender = (text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.descender ?? 0
-        text.draw(at: NSPoint(x: (x - (text.size().width - kern) / 2).rounded(), y: baseline + descender))
+        text.draw(at: NSPoint(x: (x - (text.size().width - kern) * anchor).rounded(), y: baseline + descender))
     }
 }
 
