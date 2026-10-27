@@ -174,8 +174,9 @@ private final class HeaderView: NSView {
         let title = NSAttributedString(string: level.title, attributes: label)
         title.draw(at: NSPoint(x: (x + g / 2 - (title.size().width - 1) / 2).rounded(), y: 8))
 
+        // Centered on the gauge's height; the last glyph sits ½ pt further in than the name's, +1 lines them up.
         let value = NSAttributedString(string: swap, attributes: mono(20, .medium, Ink.text, kern: 0.5))
-        value.draw(at: NSPoint(x: right - value.size().width + 0.5, y: 38))
+        value.draw(at: NSPoint(x: right - value.size().width + 1, y: 40))
         let name = NSAttributedString(string: "SWAP", attributes: label)
         name.draw(at: NSPoint(x: right - name.size().width + 1, y: 8))
     }
