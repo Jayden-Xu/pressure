@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.removeAllItems()
         let header = NSMenuItem()
-        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()), inset: inset)
+        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()))
         menu.addItem(header)
         menu.addItem(.separator())
         for row in rows {
@@ -141,44 +141,65 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header, two readouts on one baseline: pressure on the left (the menu bar gauge, large),
-/// swap on the right.
+/// Menu header, like dimmer's: the gauge as a half ring as wide as the separators, the text inside.
 ///
-///     ◜‾‾◝
-///                  1.2 GB
-///     WARNING        SWAP
+///      ◜‾‾‾‾‾‾‾‾‾‾‾‾◝
+///     ◜    WARNING     ◝
+///     |     1.2 GB     |
+///     |      SWAP      |
+///
+/// The menu bar gauge's three segments, cut square with 3 pt gaps like dimmer's rings.
 @MainActor
 private final class HeaderView: NSView {
     private let level: PressureLevel
     private let swap: String
-    private let inset: CGFloat
-    static let gauge: CGFloat = 72
+    /// 104 pt radius: 16…224 in a 240 pt menu, like the separators.
+    private static let radius: CGFloat = 104, thickness: CGFloat = 14, gap: CGFloat = 3, height: CGFloat = 120
 
-    init(level: PressureLevel, swap: String, inset: CGFloat) {
+    init(level: PressureLevel, swap: String) {
         self.level = level
         self.swap = swap
-        self.inset = inset
-        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 92))
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: Self.height))
         autoresizingMask = .width
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let x = inset, right = bounds.maxX - RowView.trailing, g = Self.gauge
+        let r = Self.radius, w = Self.thickness, c = NSPoint(x: bounds.midX, y: 10)
+        // Three segments over 180°, lit from the left; each gap is 3 pt across the ring, not a fixed angle.
+        let gapDeg = Self.gap / (r - w / 2) * 180 / .pi, seg = (180 - 2 * gapDeg) / 3
+        for i in 0..<3 {
+            let a0 = 180 - CGFloat(i) * (seg + gapDeg), a1 = a0 - seg
+            let p = NSBezierPath()
+            p.appendArc(withCenter: c, radius: r, startAngle: a0, endAngle: a1, clockwise: true)
+            p.appendArc(withCenter: c, radius: r - w, startAngle: a1, endAngle: a0, clockwise: false)
+            p.close()
+            (i < level.segments ? Ink.lit : Ink.unlit).setFill()
+            p.fill()
+        }
+        // Baselines like dimmer's: SWAP on the ring's bottom edge, the 28 pt value 22 above, the level 6 above that.
         let label = mono(11, .medium, Ink.text, kern: 1)
+        Self.center(NSAttributedString(string: "SWAP", attributes: label), x: c.x, baseline: c.y)
+        Self.center(Self.value(swap), x: c.x, baseline: c.y + 22)
+        Self.center(NSAttributedString(string: level.title, attributes: label), x: c.x, baseline: c.y + 56)
+    }
 
-        StatusIcon.drawGauge(in: NSRect(x: x, y: 16, width: g, height: g), litSegments: level.segments,
-                             ink: Ink.lit, unlitAlpha: Ink.unlitAlpha)
-        // Kern also follows the last glyph; leave it out when centering or right-aligning.
-        let title = NSAttributedString(string: level.title, attributes: label)
-        title.draw(at: NSPoint(x: (x + g / 2 - (title.size().width - 1) / 2).rounded(), y: 8))
+    /// "0.9 GB" as a large number with the unit small on its baseline, like dimmer's "38 MIN".
+    private static func value(_ s: String) -> NSAttributedString {
+        let parts = s.split(separator: " ", maxSplits: 1).map(String.init)
+        let v = NSMutableAttributedString(string: parts[0], attributes: mono(28, .medium, Ink.text, kern: 0.5))
+        guard parts.count == 2 else { return v }
+        v.addAttribute(.kern, value: 3, range: NSRange(location: v.length - 1, length: 1))
+        v.append(NSAttributedString(string: parts[1], attributes: mono(11, .medium, Ink.text, kern: 1)))
+        return v
+    }
 
-        // Centered on the gauge's height; the last glyph sits ½ pt further in than the name's, +1 lines them up.
-        let value = NSAttributedString(string: swap, attributes: mono(20, .medium, Ink.text, kern: 0.5))
-        value.draw(at: NSPoint(x: right - value.size().width + 1, y: 40))
-        let name = NSAttributedString(string: "SWAP", attributes: label)
-        name.draw(at: NSPoint(x: right - name.size().width + 1, y: 8))
+    /// Centered on `x` with the first font's baseline at `baseline`. Kern also follows the last glyph; leave it out.
+    private static func center(_ text: NSAttributedString, x: CGFloat, baseline: CGFloat) {
+        let kern = text.attribute(.kern, at: max(0, text.length - 1), effectiveRange: nil) as? CGFloat ?? 0
+        let descender = (text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.descender ?? 0
+        text.draw(at: NSPoint(x: (x - (text.size().width - kern) / 2).rounded(), y: baseline + descender))
     }
 }
 
