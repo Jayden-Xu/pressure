@@ -188,20 +188,27 @@ private final class HeaderView: NSView {
             (i < level.segments ? Ink.lit : Ink.unlit).setFill()
             p.fill()
         }
-        // Labels share one baseline; the 34 pt value is centered on the gauge's height.
+        // Each label centered under its gauge or number; labels share one baseline.
+        // The 34 pt value is centered on the gauge's height; its column ends at the separators.
         let label = mono(11, .medium, Ink.text, kern: 1)
-        Self.place(NSAttributedString(string: level.title, attributes: label), x: left, baseline: 8, anchor: 0)
-        Self.place(NSAttributedString(string: "SWAP GB", attributes: label), x: right, baseline: 8, anchor: 1)
-        Self.place(NSAttributedString(string: swap, attributes: mono(34, .medium, Ink.text, kern: 0.5)),
-                   x: right, baseline: c.y + r / 4 - 12, anchor: 1)
+        let title = NSAttributedString(string: level.title, attributes: label)
+        let unit = NSAttributedString(string: "SWAP GB", attributes: label)
+        let value = NSAttributedString(string: swap, attributes: mono(34, .medium, Ink.text, kern: 0.5))
+        let x2 = right - max(Self.width(value), Self.width(unit)) / 2
+        Self.place(title, x: c.x, baseline: 8, anchor: 0.5)
+        Self.place(unit, x: x2, baseline: 8, anchor: 0.5)
+        Self.place(value, x: x2, baseline: c.y + r / 4 - 12, anchor: 0.5)
     }
 
-    /// Draws `text` with its first font's baseline at `baseline`; `anchor` 0 starts it at `x`, 1 ends it there.
-    /// Kern also follows the last glyph; leave it out so right-aligned text ends flush.
+    /// Ink width: kern also follows the last glyph; leave it out.
+    private static func width(_ text: NSAttributedString) -> CGFloat {
+        text.size().width - (text.attribute(.kern, at: max(0, text.length - 1), effectiveRange: nil) as? CGFloat ?? 0)
+    }
+
+    /// Draws `text` with its first font's baseline at `baseline`; `anchor` 0 starts it at `x`, 0.5 centers it, 1 ends it there.
     private static func place(_ text: NSAttributedString, x: CGFloat, baseline: CGFloat, anchor: CGFloat) {
-        let kern = text.attribute(.kern, at: max(0, text.length - 1), effectiveRange: nil) as? CGFloat ?? 0
         let descender = (text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.descender ?? 0
-        text.draw(at: NSPoint(x: (x - (text.size().width - kern) * anchor).rounded(), y: baseline + descender))
+        text.draw(at: NSPoint(x: (x - width(text) * anchor).rounded(), y: baseline + descender))
     }
 }
 
