@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.removeAllItems()
         let header = NSMenuItem()
-        header.view = HeaderView(level: monitor.level, swap: gb(FootprintScanner.swapUsedBytes()), inset: inset)
+        header.view = HeaderView(level: monitor.level, swap: String(format: "%.1f", gib(FootprintScanner.swapUsedBytes())), inset: inset)
         menu.addItem(header)
         menu.addItem(.separator())
         for row in rows {
@@ -89,7 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func gb(_ bytes: UInt64) -> String {
-        String(format: "%.1f GB", Double(bytes) / 1_073_741_824)
+        String(format: "%.1f GB", gib(bytes))
+    }
+
+    private func gib(_ bytes: UInt64) -> Double {
+        Double(bytes) / 1_073_741_824
     }
 
     // MARK: Actions
@@ -141,16 +145,17 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
     [.font: NSFont.monospacedSystemFont(ofSize: size, weight: weight), .foregroundColor: color, .kern: kern]
 }
 
-/// Menu header: the menu bar's gauge, small, over the level; the swap in large mono over its label.
-/// Each half of the menu centers its own column.
+/// Menu header: the menu bar's gauge, small, over the level; the swap in large mono over its label,
+/// the unit in the label so the number centers on its own. Each half of the menu centers its column.
 ///
-///      ◜‾◝       1.2 GB
-///     WARNING      SWAP
+///      ◜‾◝        1.2
+///     WARNING    SWAP GB
 ///
 /// The gauge's three segments are cut square with 3 pt gaps, like the bars below.
 @MainActor
 private final class HeaderView: NSView {
     private let level: PressureLevel
+    /// Swap in GB, "1.2".
     private let swap: String
     /// Where the menu's titles start, so the columns split the same span as the rows.
     private let inset: CGFloat
@@ -183,21 +188,11 @@ private final class HeaderView: NSView {
             (i < level.segments ? Ink.lit : Ink.unlit).setFill()
             p.fill()
         }
-        // Labels share one baseline; the 28 pt value sits level with the gauge's lower ends.
+        // Labels share one baseline; the 34 pt value stands about as tall as the gauge, centered on it.
         let label = mono(11, .medium, Ink.text, kern: 1)
         Self.center(NSAttributedString(string: level.title, attributes: label), x: x1, baseline: 8)
-        Self.center(NSAttributedString(string: "SWAP", attributes: label), x: x2, baseline: 8)
-        Self.center(Self.value(swap), x: x2, baseline: 29)
-    }
-
-    /// "0.9 GB" as a large number with the unit small on its baseline, like dimmer's "38 MIN".
-    private static func value(_ s: String) -> NSAttributedString {
-        let parts = s.split(separator: " ", maxSplits: 1).map(String.init)
-        let v = NSMutableAttributedString(string: parts[0], attributes: mono(28, .medium, Ink.text, kern: 0.5))
-        guard parts.count == 2 else { return v }
-        v.addAttribute(.kern, value: 3, range: NSRange(location: v.length - 1, length: 1))
-        v.append(NSAttributedString(string: parts[1], attributes: mono(11, .medium, Ink.text, kern: 1)))
-        return v
+        Self.center(NSAttributedString(string: "SWAP GB", attributes: label), x: x2, baseline: 8)
+        Self.center(NSAttributedString(string: swap, attributes: mono(34, .medium, Ink.text, kern: 0.5)), x: x2, baseline: 34)
     }
 
     /// Centered on `x` with the first font's baseline at `baseline`. Kern also follows the last glyph; leave it out.
