@@ -153,13 +153,13 @@ private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, ke
 private final class HeaderView: NSView {
     private let level: PressureLevel
     private let swap: String
-    /// 104 pt radius: 16…224 in a 240 pt menu, like the separators.
-    private static let radius: CGFloat = 104, thickness: CGFloat = 14, gap: CGFloat = 3, height: CGFloat = 120
+    /// 94 pt radius: 16…204 in a 220 pt menu, like the separators.
+    private static let radius: CGFloat = 94, thickness: CGFloat = 12, gap: CGFloat = 3, height: CGFloat = 110
 
     init(level: PressureLevel, swap: String) {
         self.level = level
         self.swap = swap
-        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: Self.height))
+        super.init(frame: NSRect(x: 0, y: 0, width: 220, height: Self.height))
         autoresizingMask = .width
     }
 
@@ -178,11 +178,11 @@ private final class HeaderView: NSView {
             (i < level.segments ? Ink.lit : Ink.unlit).setFill()
             p.fill()
         }
-        // Baselines like dimmer's: SWAP on the ring's bottom edge, the 28 pt value 22 above, the level 6 above that.
+        // Baselines like dimmer's: SWAP on the ring's bottom edge, the 28 pt value 22 above, the level 4 above that.
         let label = mono(11, .medium, Ink.text, kern: 1)
         Self.center(NSAttributedString(string: "SWAP", attributes: label), x: c.x, baseline: c.y)
         Self.center(Self.value(swap), x: c.x, baseline: c.y + 22)
-        Self.center(NSAttributedString(string: level.title, attributes: label), x: c.x, baseline: c.y + 56)
+        Self.center(NSAttributedString(string: level.title, attributes: label), x: c.x, baseline: c.y + 54)
     }
 
     /// "0.9 GB" as a large number with the unit small on its baseline, like dimmer's "38 MIN".
@@ -245,7 +245,7 @@ private final class RowView: NSView {
         }
 
         /// Minimum row width; the menu may be wider (standard items reserve room for icons and shortcuts), and rows stretch to it.
-        var minWidth: CGFloat { max(240, inset + labelWidth + 28 + valueWidth + RowView.trailing) }
+        var minWidth: CGFloat { max(220, inset + labelWidth + 28 + valueWidth + RowView.trailing) }
     }
 
     private let label: String
