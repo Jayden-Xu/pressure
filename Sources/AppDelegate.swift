@@ -135,6 +135,8 @@ private extension PressureLevel {
 /// Text is the system's label color; only the gauge and bars are grey (black at low alpha on the light menu).
 @MainActor private enum Ink {
     static let text = NSColor.labelColor
+    /// Menu width, the same as dimmer's; only an unusually long app name widens it.
+    static let menuWidth: CGFloat = 230
     /// Segments, lit and unlit: the menu bar gauge's two tones, lightened.
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
@@ -166,7 +168,7 @@ private final class HeaderView: NSView {
         self.level = level
         self.swap = swap
         self.inset = inset
-        super.init(frame: NSRect(x: 0, y: 0, width: 220, height: Self.height))
+        super.init(frame: NSRect(x: 0, y: 0, width: Ink.menuWidth, height: Self.height))
         autoresizingMask = .width
     }
 
@@ -254,7 +256,7 @@ private final class RowView: NSView {
         }
 
         /// Minimum row width; the menu may be wider (standard items reserve room for icons and shortcuts), and rows stretch to it.
-        var minWidth: CGFloat { max(220, inset + labelWidth + 28 + valueWidth + RowView.trailing) }
+        var minWidth: CGFloat { max(Ink.menuWidth, inset + labelWidth + 28 + valueWidth + RowView.trailing) }
     }
 
     private let label: String
