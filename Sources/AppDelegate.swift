@@ -425,27 +425,15 @@ private final class HistoryView: NSView {
             Ink.text.setStroke()
             line.stroke()
         }
-        var stats = (peak: 0, peakAt: -1, sum: 0, count: 0)
+        var stats = (peak: 0, sum: 0, count: 0)
         for (i, slot) in series.enumerated() {
             guard let s = slot else { finishRun(); continue }
             run.append(NSPoint(x: x(i), y: y(s)))
-            if s.swap > stats.peak { (stats.peak, stats.peakAt) = (s.swap, i) }
+            stats.peak = max(stats.peak, s.swap)
             stats.sum += s.swap
             stats.count += 1
         }
         finishRun()
-        // The peak, a ring; now, a dot, when the last slot has data.
-        if stats.peakAt >= 0, let s = series[stats.peakAt] {
-            let ring = NSBezierPath(ovalIn: NSRect(x: x(stats.peakAt) - 3, y: y(s) - 3, width: 6, height: 6))
-            ring.lineWidth = 1.1
-            Ink.text.setStroke()
-            ring.stroke()
-        }
-        if let last = series.last ?? nil {
-            Ink.text.setFill()
-            NSBezierPath(ovalIn: NSRect(x: x(n - 1) - 2.6, y: y(last) - 2.6, width: 5.2, height: 5.2)).fill()
-        }
-
         // Pressure lane: 96 cells of 15 min, lit by the worst level inside.
         let cells = 96, per = n / cells
         for c in 0..<cells {
