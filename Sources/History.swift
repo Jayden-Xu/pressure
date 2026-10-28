@@ -3,7 +3,7 @@ import Foundation
 /// The last 24 h of swap and memory pressure, one slot per 3 min, kept as a ring: a time's slot is
 /// `id % count`, so the newest sample overwrites the one 24 h older and the stored data never grows.
 /// Fed by the 10 s pressure check that already runs (no timer of its own); a slot keeps its highest
-/// swap and highest level. Held in memory and written once an hour (on the hour), plus on sleep and quit:
+/// swap and highest level. Held in memory, which is what the menu draws from, and written once an hour (on the hour), plus on sleep and quit:
 /// each write costs a wakeup, so fewer and bigger. A crash or power loss costs at most the last hour.
 @MainActor
 final class History {

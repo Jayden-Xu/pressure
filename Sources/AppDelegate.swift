@@ -76,11 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)
     func menuNeedsUpdate(_ menu: NSMenu) {
-        // Opening the menu reads everything fresh (level, so the icon follows too; swap), then saves the
-        // history: the ring ends at this very moment, and a crash right after loses nothing.
+        // Opening the menu reads everything fresh (level, so the icon follows too; swap) into memory, so the
+        // chart ends at this very moment. It is drawn from memory: nothing is written here.
         monitor.refresh()
         sample()
-        history.flush()
         let entries = FootprintScanner.topEntries(limit: Self.topN)
 
         // Titles start 16 pt in, or 24 pt once any item shows a checkmark (the state column).
@@ -455,22 +454,30 @@ private final class HistoryView: NSView {
             NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 8, width: w / CGFloat(cells) - 0.5, height: 4).fill()
         }
 
-        // Time axis: a tick every hour back from now, longer at 3 h and 6 h, labeled every 6 h.
+        // Time axis in local clock time: a tick at every whole hour in the window, longer at 3 h and 6 h,
+        // labeled at 00, 06, 12 and 18. The window runs from 24 h ago to the newest slot.
         let axisY = h - 96
         let axis = NSBezierPath()
         axis.move(to: NSPoint(x: x0, y: axisY))
         axis.line(to: NSPoint(x: x0 + w, y: axisY))
-        for k in 0...24 {
-            let tx = x0 + w * CGFloat(k) / 24
+        let newest = History.id(of: Date()), cal = Calendar.current
+        let start = Date(timeIntervalSince1970: Double(newest - n + 1) * History.seconds)
+        let span = Double(n - 1) * History.seconds
+        var hour = cal.nextDate(after: start, matching: DateComponents(minute: 0, second: 0), matchingPolicy: .nextTime)
+        while let t = hour, t.timeIntervalSince(start) <= span {
+            let tx = x0 + w * CGFloat(t.timeIntervalSince(start) / span), clock = cal.component(.hour, from: t)
             axis.move(to: NSPoint(x: tx, y: axisY))
-            axis.line(to: NSPoint(x: tx, y: axisY - (k % 6 == 0 ? 7 : k % 3 == 0 ? 5 : 3)))
+            axis.line(to: NSPoint(x: tx, y: axisY - (clock % 6 == 0 ? 7 : clock % 3 == 0 ? 5 : 3)))
+            if clock % 6 == 0 {
+                // Keep a label next to an end of the axis inside it.
+                let anchor: CGFloat = tx - x0 < 12 ? 0 : x0 + w - tx < 12 ? 1 : 0.5
+                HeaderView.place(NSAttributedString(string: String(format: "%02d", clock), attributes: caption), x: tx, baseline: h - 117, anchor: anchor)
+            }
+            hour = cal.date(byAdding: .hour, value: 1, to: t)
         }
         axis.lineWidth = 0.7
         Ink.tick.setStroke()
         axis.stroke()
-        for (k, text) in ["-24H", "-18H", "-12H", "-6H", "NOW"].enumerated() {
-            HeaderView.place(NSAttributedString(string: text, attributes: caption), x: x0 + w * CGFloat(k) / 4, baseline: h - 117, anchor: k == 0 ? 0 : k == 4 ? 1 : 0.5)
-        }
 
         // Peak and average, each a number over its label with the unit in it, centered in its half.
         let have = stats.count > 0
