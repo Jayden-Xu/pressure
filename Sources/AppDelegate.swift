@@ -187,23 +187,10 @@ private extension PressureLevel {
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
     /// The last lit segment: the gauge's scan head.
     static let head = NSColor.labelColor.withAlphaComponent(0.9)
-    /// Hairlines: guides and tick scales.
+    /// Hairlines: guides.
     static let hair = NSColor.labelColor.withAlphaComponent(0.14)
     static let tick = NSColor.labelColor.withAlphaComponent(0.4)
 
-    /// A scale outside a 240° gauge open at the bottom, a tick every `step` degrees, every fifth longer.
-    static func ticks(center c: NSPoint, radius r: CGFloat, step: CGFloat) {
-        let n = Int((240 / step).rounded())
-        let p = NSBezierPath()
-        for k in 0...n {
-            let a = (210 - CGFloat(k) * step) * .pi / 180, len: CGFloat = k % 5 == 0 || k == n ? 4 : 2.2
-            p.move(to: NSPoint(x: c.x + r * cos(a), y: c.y + r * sin(a)))
-            p.line(to: NSPoint(x: c.x + (r + len) * cos(a), y: c.y + (r + len) * sin(a)))
-        }
-        p.lineWidth = 0.7
-        tick.setStroke()
-        p.stroke()
-    }
 }
 
 private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, kern: CGFloat = 0) -> [NSAttributedString.Key: Any] {
@@ -253,7 +240,6 @@ private final class HeaderView: NSView {
             (i < level.segments ? (i == level.segments - 1 ? Ink.head : Ink.lit) : Ink.unlit).setFill()
             p.fill()
         }
-        Ink.ticks(center: c, radius: r + 5, step: 10)
         // Each label centered under its gauge or number; labels share one baseline.
         // The 38 pt value is centered on the gauge's height; its column ends at the separators.
         let label = mono(Ink.caption, .medium, Ink.text, kern: 1)
@@ -418,8 +404,12 @@ private final class HistoryView: NSView {
             area.line(to: NSPoint(x: last.x, y: bottom))
             area.line(to: NSPoint(x: first.x, y: bottom))
             area.close()
-            Ink.text.withAlphaComponent(0.07).setFill()
-            area.fill()
+            // The fill fades from the top guide down to the bottom, the same for every stretch.
+            NSGraphicsContext.saveGraphicsState()
+            area.addClip()
+            NSGradient(starting: Ink.text.withAlphaComponent(0.2), ending: Ink.text.withAlphaComponent(0.01))?
+                .draw(from: NSPoint(x: x0, y: top), to: NSPoint(x: x0, y: bottom), options: [])
+            NSGraphicsContext.restoreGraphicsState()
             line.lineWidth = 1.2
             line.lineJoinStyle = .round
             Ink.text.setStroke()
