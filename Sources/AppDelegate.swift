@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var monitor: PressureMonitor!
     private var hotKey: HotKey?
+    private let history = History()
+    private let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 
     static func main() {
         let app = NSApplication.shared
@@ -26,15 +28,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         monitor = PressureMonitor { [weak self] level in
-            MainActor.assumeIsolated { self?.showIcon(for: level) }
+            MainActor.assumeIsolated {
+                self?.showIcon(for: level)
+                self?.sample()
+            }
         }
+        // kill / pkill (and so a reinstall) end the process without applicationWillTerminate: save first.
+        signal(SIGTERM, SIG_IGN)
+        termination.setEventHandler { [weak self] in
+            self?.history.flush()
+            NSApp.terminate(nil)
+        }
+        termination.activate()
+        // Nothing more is recorded while asleep, so save then rather than wake the disk for it.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.history.flush() }
+        }
+        monitor.onTick = { [weak self] in MainActor.assumeIsolated { self?.sample() } }
         showIcon(for: monitor.level)
+        sample()
 
         // ⌃⌥⌘P opens the menu, same as clicking the icon.
         hotKey = HotKey(keyCode: kVK_ANSI_P, modifiers: cmdKey | optionKey | controlKey) { [weak self] in
             // Async: let the Carbon handler return before the menu's tracking loop starts.
             DispatchQueue.main.async { self?.statusItem.button?.performClick(nil) }
         }
+    }
+
+    func applicationWillTerminate(_ note: Notification) {
+        history.flush()
+    }
+
+    /// Swap and level into the 24 h history; called on the monitor's existing 10 s check.
+    private func sample() {
+        history.record(swapBytes: FootprintScanner.swapUsedBytes(), level: monitor.level)
     }
 
     private func showIcon(for level: PressureLevel) {
@@ -49,6 +76,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // Opening the menu reads everything fresh (level, so the icon follows too; swap), then saves the
+        // history: the ring ends at this very moment, and a crash right after loses nothing.
+        monitor.refresh()
+        sample()
+        history.flush()
         let entries = FootprintScanner.topEntries(limit: Self.topN)
 
         // Titles start 16 pt in, or 24 pt once any item shows a checkmark (the state column).
@@ -66,6 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         header.view = HeaderView(level: monitor.level, swap: String(format: "%.1f", gib(FootprintScanner.swapUsedBytes())), inset: inset)
         menu.addItem(header)
         menu.addItem(.separator())
+        let chart = NSMenuItem()
+        chart.view = HistoryView(series: history.series(), inset: inset)
+        menu.addItem(chart)
+        menu.addItem(.separator())
         for row in rows {
             let item = NSMenuItem()
             item.view = RowView(label: row.label, value: row.value, share: row.share, layout: layout)
@@ -79,11 +115,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        login.attributedTitle = NSAttributedString(string: login.title, attributes: [.font: Ink.bodyFont])
         login.target = self
         login.state = loginOn ? .on : .off
         menu.addItem(login)
         // Own selector: macOS 26 auto-adds an ✕ symbol to items wired to terminate(_:).
         let quitSelf = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+        quitSelf.attributedTitle = NSAttributedString(string: quitSelf.title, attributes: [.font: Ink.bodyFont])
         quitSelf.target = self
         menu.addItem(quitSelf)
     }
@@ -136,11 +174,37 @@ private extension PressureLevel {
 @MainActor private enum Ink {
     static let text = NSColor.labelColor
     /// Menu width, the same as dimmer's; only an unusually long app name widens it.
-    static let menuWidth: CGFloat = 230
+    static let menuWidth: CGFloat = 320
+    static let gaugeRadius: CGFloat = 52
+    /// The header's number is centered in this width, ending at the separators.
+    static let columnWidth: CGFloat = 120
+    /// The whole menu is SF Mono medium in three sizes: the header's number, everything else you read
+    /// (rows, stats, menu items), and captions (labels, axes), which are also spaced out.
+    static let hero: CGFloat = 38, body: CGFloat = 14, caption: CGFloat = 11
+    static let bodyFont = NSFont.monospacedSystemFont(ofSize: body, weight: .medium)
     /// Segments, lit and unlit: the menu bar gauge's two tones, lightened.
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
+    /// The last lit segment: the gauge's scan head.
+    static let head = NSColor.labelColor.withAlphaComponent(0.9)
+    /// Hairlines: guides and tick scales.
+    static let hair = NSColor.labelColor.withAlphaComponent(0.14)
+    static let tick = NSColor.labelColor.withAlphaComponent(0.4)
+
+    /// A scale outside a 240° gauge open at the bottom, a tick every `step` degrees, every fifth longer.
+    static func ticks(center c: NSPoint, radius r: CGFloat, step: CGFloat) {
+        let n = Int((240 / step).rounded())
+        let p = NSBezierPath()
+        for k in 0...n {
+            let a = (210 - CGFloat(k) * step) * .pi / 180, len: CGFloat = k % 5 == 0 || k == n ? 4 : 2.2
+            p.move(to: NSPoint(x: c.x + r * cos(a), y: c.y + r * sin(a)))
+            p.line(to: NSPoint(x: c.x + (r + len) * cos(a), y: c.y + (r + len) * sin(a)))
+        }
+        p.lineWidth = 0.7
+        tick.setStroke()
+        p.stroke()
+    }
 }
 
 private func mono(_ size: CGFloat, _ weight: NSFont.Weight, _ color: NSColor, kern: CGFloat = 0) -> [NSAttributedString.Key: Any] {
@@ -161,8 +225,8 @@ private final class HeaderView: NSView {
     private let swap: String
     /// Where the menu's titles start, so the columns split the same span as the rows.
     private let inset: CGFloat
-    private static let radius: CGFloat = 32, thickness: CGFloat = 10, gap: CGFloat = 3, sweep: CGFloat = 240
-    private static let height: CGFloat = 80
+    private static let radius = Ink.gaugeRadius, thickness: CGFloat = 15, gap: CGFloat = 5, sweep: CGFloat = 240
+    private static let height: CGFloat = 126
 
     init(level: PressureLevel, swap: String, inset: CGFloat) {
         self.level = level
@@ -179,7 +243,7 @@ private final class HeaderView: NSView {
 
         // Three segments over 240°, open at the bottom, lit clockwise from the left.
         // Its lower ends sit 16 above the labels' baseline.
-        let r = Self.radius, w = Self.thickness, c = NSPoint(x: left + r, y: 24 + r / 2)
+        let r = Self.radius, w = Self.thickness, c = NSPoint(x: left + r, y: 30 + r / 2)
         let gapDeg = Self.gap / (r - w / 2) * 180 / .pi, seg = (Self.sweep - 2 * gapDeg) / 3
         for i in 0..<3 {
             let a0 = 90 + Self.sweep / 2 - CGFloat(i) * (seg + gapDeg), a1 = a0 - seg
@@ -187,28 +251,29 @@ private final class HeaderView: NSView {
             p.appendArc(withCenter: c, radius: r, startAngle: a0, endAngle: a1, clockwise: true)
             p.appendArc(withCenter: c, radius: r - w, startAngle: a1, endAngle: a0, clockwise: false)
             p.close()
-            (i < level.segments ? Ink.lit : Ink.unlit).setFill()
+            (i < level.segments ? (i == level.segments - 1 ? Ink.head : Ink.lit) : Ink.unlit).setFill()
             p.fill()
         }
+        Ink.ticks(center: c, radius: r + 5, step: 10)
         // Each label centered under its gauge or number; labels share one baseline.
-        // The 34 pt value is centered on the gauge's height; its column ends at the separators.
-        let label = mono(11, .medium, Ink.text, kern: 1)
+        // The 38 pt value is centered on the gauge's height; its column ends at the separators.
+        let label = mono(Ink.caption, .medium, Ink.text, kern: 1)
         let title = NSAttributedString(string: level.title, attributes: label)
         let unit = NSAttributedString(string: "SWAP GB", attributes: label)
-        let value = NSAttributedString(string: swap, attributes: mono(34, .medium, Ink.text, kern: 0.5))
-        let x2 = right - max(Self.width(value), Self.width(unit)) / 2
-        Self.place(title, x: c.x, baseline: 8, anchor: 0.5)
-        Self.place(unit, x: x2, baseline: 8, anchor: 0.5)
-        Self.place(value, x: x2, baseline: c.y + r / 4 - 12, anchor: 0.5)
+        let value = NSAttributedString(string: swap, attributes: mono(Ink.hero, .medium, Ink.text, kern: 0.5))
+        let x2 = right - Ink.columnWidth / 2
+        Self.place(title, x: c.x, baseline: 14, anchor: 0.5)
+        Self.place(unit, x: x2, baseline: 14, anchor: 0.5)
+        Self.place(value, x: x2, baseline: c.y + r / 4 - 14, anchor: 0.5)
     }
 
     /// Ink width: kern also follows the last glyph; leave it out.
-    private static func width(_ text: NSAttributedString) -> CGFloat {
+    fileprivate static func width(_ text: NSAttributedString) -> CGFloat {
         text.size().width - (text.attribute(.kern, at: max(0, text.length - 1), effectiveRange: nil) as? CGFloat ?? 0)
     }
 
     /// Draws `text` with its first font's baseline at `baseline`; `anchor` 0 starts it at `x`, 0.5 centers it, 1 ends it there.
-    private static func place(_ text: NSAttributedString, x: CGFloat, baseline: CGFloat, anchor: CGFloat) {
+    fileprivate static func place(_ text: NSAttributedString, x: CGFloat, baseline: CGFloat, anchor: CGFloat) {
         let descender = (text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.descender ?? 0
         text.draw(at: NSPoint(x: (x - width(text) * anchor).rounded(), y: baseline + descender))
     }
@@ -220,14 +285,12 @@ private final class HeaderView: NSView {
 /// and an enabled one highlights on hover as if it were clickable.
 @MainActor
 private final class RowView: NSView {
-    static let labelFont = NSFont.menuFont(ofSize: 0)
-    static let valueFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+    static let labelFont = Ink.bodyFont, valueFont = Ink.bodyFont
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
-    static let textHeight: CGFloat = 22
-    static let height: CGFloat = textHeight + 9
+    static let height: CGFloat = 36
     /// Bar: 20 segments, so one segment is 5% of physical memory.
-    static let segments = 20, segmentGap: CGFloat = 2, barHeight: CGFloat = 3
+    static let segments = 20, segmentGap: CGFloat = 2, barHeight: CGFloat = 4
 
     // Built once, not on every draw.
     static let labelAttributes: [NSAttributedString.Key: Any] = {
@@ -251,7 +314,7 @@ private final class RowView: NSView {
         /// `inset`: where the menu's titles start.
         init(_ rows: [(label: String, value: String)], inset: CGFloat) {
             self.inset = inset
-            labelWidth = min(220, rows.map { RowView.width($0.label, RowView.labelFont) }.max() ?? 0)
+            labelWidth = min(200, rows.map { RowView.width($0.label, RowView.labelFont) }.max() ?? 0)
             valueWidth = rows.map { RowView.width($0.value, RowView.valueFont) }.max() ?? 0
         }
 
@@ -279,14 +342,12 @@ private final class RowView: NSView {
 
     // Drawn directly rather than with two NSTextFields per row: half the memory each time the menu opens.
     override func draw(_ dirtyRect: NSRect) {
-        let line = Self.labelFont.boundingRectForFont.height
-        // Text in the top part, bar below it.
-        let y = ((Self.textHeight - line) / 2).rounded() + bounds.height - Self.textHeight
+        let line = Self.labelFont.ascender - Self.labelFont.descender
+        // Name and value share one baseline, 21 above the bottom; the bar is below it.
+        let y = 21 + Self.labelFont.descender
         (label as NSString).draw(in: NSRect(x: layout.inset, y: y, width: layout.labelWidth, height: line),
                                  withAttributes: Self.labelAttributes)
-        // Mono value, baseline-matched to the label.
-        let vy = y + Self.labelFont.descender - Self.valueFont.descender
-        (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.trailing - layout.valueWidth, y: vy, width: layout.valueWidth, height: line),
+        (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.trailing - layout.valueWidth, y: y, width: layout.valueWidth, height: line),
                                  withAttributes: Self.valueAttributes)
 
         // Segment edges rounded to whole points so every segment is equally crisp.
@@ -297,11 +358,128 @@ private final class RowView: NSView {
             let left = (x0 + CGFloat(i) * step).rounded()
             let right = (x0 + CGFloat(i + 1) * step - Self.segmentGap).rounded()
             (i < lit ? Ink.lit : Ink.unlit).setFill()
-            NSRect(x: left, y: 6, width: right - left, height: Self.barHeight).fill()
+            NSRect(x: left, y: 7, width: right - left, height: Self.barHeight).fill()
         }
     }
 
     static func width(_ string: String, _ font: NSFont) -> CGFloat {
         ceil((string as NSString).size(withAttributes: [.font: font]).width)
+    }
+}
+
+/// The last 24 h as a line chart, oldest at the left, now at the right: swap as a line with a light fill,
+/// a lane of segments above it for warnings (grey) and criticals (black), an hourly time axis, and the
+/// peak and the average under it, each a number over its label. One point per 3 min, about a pixel each.
+@MainActor
+private final class HistoryView: NSView {
+    private let series: [History.Slot?]
+    private let inset: CGFloat
+    static let height: CGFloat = 172
+
+    init(series: [History.Slot?], inset: CGFloat) {
+        self.series = series
+        self.inset = inset
+        super.init(frame: NSRect(x: 0, y: 0, width: Ink.menuWidth, height: Self.height))
+        autoresizingMask = .width
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let n = series.count, h = Self.height
+        let x0 = inset, w = bounds.maxX - RowView.trailing - x0
+        let top = h - 24, bottom = h - 94
+        // The top guide is the highest whole GB above the peak, at least 2.
+        let guide = max(2, ((series.compactMap { $0?.swap }.max() ?? 0) + 99) / 100)
+        func x(_ i: Int) -> CGFloat { x0 + w * CGFloat(i) / CGFloat(n - 1) }
+        func y(_ s: History.Slot) -> CGFloat { bottom + CGFloat(s.swap) / 100 / CGFloat(guide) * (top - bottom) }
+
+        // Guides: the bottom, the middle and the top (dotted).
+        for g in 0...2 {
+            let gy = bottom + CGFloat(g) * (top - bottom) / 2
+            let p = NSBezierPath()
+            p.move(to: NSPoint(x: x0, y: gy))
+            p.line(to: NSPoint(x: x0 + w, y: gy))
+            if g > 0 { p.setLineDash([1, 2], count: 2, phase: 0) }
+            p.lineWidth = 0.6
+            Ink.hair.setStroke()
+            p.stroke()
+        }
+        let caption = mono(Ink.caption, .medium, Ink.text, kern: 1)
+
+        // Swap: one line with a fill per stretch with data (the app wasn't running in the gaps).
+        var run: [NSPoint] = []
+        func finishRun() {
+            defer { run.removeAll() }
+            guard let first = run.first, let last = run.last else { return }
+            let line = NSBezierPath()
+            line.move(to: first)
+            for p in run.dropFirst() { line.line(to: p) }
+            let area = line.copy() as! NSBezierPath
+            area.line(to: NSPoint(x: last.x, y: bottom))
+            area.line(to: NSPoint(x: first.x, y: bottom))
+            area.close()
+            Ink.text.withAlphaComponent(0.07).setFill()
+            area.fill()
+            line.lineWidth = 1.2
+            line.lineJoinStyle = .round
+            Ink.text.setStroke()
+            line.stroke()
+        }
+        var stats = (peak: 0, peakAt: -1, sum: 0, count: 0)
+        for (i, slot) in series.enumerated() {
+            guard let s = slot else { finishRun(); continue }
+            run.append(NSPoint(x: x(i), y: y(s)))
+            if s.swap > stats.peak { (stats.peak, stats.peakAt) = (s.swap, i) }
+            stats.sum += s.swap
+            stats.count += 1
+        }
+        finishRun()
+        // The peak, a ring; now, a dot, when the last slot has data.
+        if stats.peakAt >= 0, let s = series[stats.peakAt] {
+            let ring = NSBezierPath(ovalIn: NSRect(x: x(stats.peakAt) - 3, y: y(s) - 3, width: 6, height: 6))
+            ring.lineWidth = 1.1
+            Ink.text.setStroke()
+            ring.stroke()
+        }
+        if let last = series.last ?? nil {
+            Ink.text.setFill()
+            NSBezierPath(ovalIn: NSRect(x: x(n - 1) - 2.6, y: y(last) - 2.6, width: 5.2, height: 5.2)).fill()
+        }
+
+        // Pressure lane: 96 cells of 15 min, lit by the worst level inside.
+        let cells = 96, per = n / cells
+        for c in 0..<cells {
+            let worst = series[(c * per)..<((c + 1) * per)].compactMap { $0?.level }.max() ?? PressureLevel.normal.rawValue
+            (worst >= PressureLevel.critical.rawValue ? Ink.head : worst > PressureLevel.normal.rawValue ? Ink.lit : Ink.unlit).setFill()
+            NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 8, width: w / CGFloat(cells) - 0.5, height: 4).fill()
+        }
+
+        // Time axis: a tick every hour back from now, longer at 3 h and 6 h, labeled every 6 h.
+        let axisY = h - 96
+        let axis = NSBezierPath()
+        axis.move(to: NSPoint(x: x0, y: axisY))
+        axis.line(to: NSPoint(x: x0 + w, y: axisY))
+        for k in 0...24 {
+            let tx = x0 + w * CGFloat(k) / 24
+            axis.move(to: NSPoint(x: tx, y: axisY))
+            axis.line(to: NSPoint(x: tx, y: axisY - (k % 6 == 0 ? 7 : k % 3 == 0 ? 5 : 3)))
+        }
+        axis.lineWidth = 0.7
+        Ink.tick.setStroke()
+        axis.stroke()
+        for (k, text) in ["-24H", "-18H", "-12H", "-6H", "NOW"].enumerated() {
+            HeaderView.place(NSAttributedString(string: text, attributes: caption), x: x0 + w * CGFloat(k) / 4, baseline: h - 117, anchor: k == 0 ? 0 : k == 4 ? 1 : 0.5)
+        }
+
+        // Peak and average, each a number over its label with the unit in it, centered in its half.
+        let have = stats.count > 0
+        let blocks = [(have ? String(format: "%.1f", Double(stats.peak) / 100) : "--", "PEAK GB"),
+                      (have ? String(format: "%.1f", Double(stats.sum) / Double(stats.count) / 100) : "--", "AVG GB")]
+        for (k, block) in blocks.enumerated() {
+            let cx = x0 + w * (k == 0 ? 0.25 : 0.75)
+            HeaderView.place(NSAttributedString(string: block.0, attributes: mono(Ink.body, .medium, Ink.text)), x: cx, baseline: h - 148, anchor: 0.5)
+            HeaderView.place(NSAttributedString(string: block.1, attributes: caption), x: cx, baseline: h - 165, anchor: 0.5)
+        }
     }
 }

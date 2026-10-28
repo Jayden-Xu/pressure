@@ -14,6 +14,8 @@ final class PressureMonitor {
     private(set) var level: PressureLevel
     private var lastSysctlLevel: PressureLevel
     private let onChange: (PressureLevel) -> Void
+    /// Every check (10 s), changed or not: the history samples here instead of running its own timer.
+    var onTick: (() -> Void)?
     private let events = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
     private let check = DispatchSource.makeTimerSource(queue: .main)
 
@@ -34,12 +36,21 @@ final class PressureMonitor {
         // Large leeway lets the system batch this wakeup with others.
         check.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(5))
         check.setEventHandler { [unowned self] in
+            onTick?()
             let current = Self.sysctlLevel()
             guard current != lastSysctlLevel else { return }
             lastSysctlLevel = current
             update(current)
         }
         check.activate()
+    }
+
+    /// Reads the level now instead of waiting for the next 10 s check; the menu calls it when it opens.
+    func refresh() {
+        let current = Self.sysctlLevel()
+        guard current != lastSysctlLevel else { return }
+        lastSysctlLevel = current
+        update(current)
     }
 
     private func update(_ new: PressureLevel) {
