@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.removeAllItems()
         let header = NSMenuItem()
-        header.view = HeaderView(level: monitor.level, swap: String(format: "%.1f", gib(FootprintScanner.swapUsedBytes())), inset: inset)
+        header.view = HeaderView(level: monitor.level, swap: String(format: "%.2f", gib(FootprintScanner.swapUsedBytes())), inset: inset)
         menu.addItem(header)
         menu.addItem(.separator())
         let chart = NSMenuItem()
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func gb(_ bytes: UInt64) -> String {
-        String(format: "%.1f GB", gib(bytes))
+        String(format: "%.2f GB", gib(bytes))
     }
 
     private func gib(_ bytes: UInt64) -> Double {
@@ -461,8 +461,8 @@ private final class HistoryView: NSView {
 
         // Peak and average, each a number over its label with the unit in it, centered in its half.
         let have = stats.count > 0
-        let blocks = [(have ? String(format: "%.1f", Double(stats.peak) / 100) : "--", "PEAK GB"),
-                      (have ? String(format: "%.1f", Double(stats.sum) / Double(stats.count) / 100) : "--", "AVG GB")]
+        let blocks = [(have ? String(format: "%.2f", Double(stats.peak) / 100) : "--", "PEAK GB"),
+                      (have ? String(format: "%.2f", Double(stats.sum) / Double(stats.count) / 100) : "--", "AVG GB")]
         for (k, block) in blocks.enumerated() {
             let cx = x0 + w * (k == 0 ? 0.25 : 0.75)
             HeaderView.place(NSAttributedString(string: block.0, attributes: mono(Ink.body, .regular, Ink.text)), x: cx, baseline: h - 148, anchor: 0.5)
