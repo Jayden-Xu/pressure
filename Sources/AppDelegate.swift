@@ -443,11 +443,16 @@ private final class HistoryView: NSView {
         }
         finishRun()
         if let end = lastEnd, end.x < x0 + w - 1 { dotted(from: end, to: NSPoint(x: x0 + w, y: end.y)) }
-        // Pressure lane: 96 cells of 15 min, lit by the worst level inside.
-        let cells = 96, per = n / cells
-        for c in 0..<cells {
-            let cell = NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 12, width: w / CGFloat(cells) - 0.5, height: 8)
-            guard let worst = series[(c * per)..<((c + 1) * per)].compactMap({ $0?.level }).max() else {
+        // Pressure lane: one cell per real quarter hour (5 slots of 3 min, counted from the clock, not from the
+        // left edge, so cells keep the same slots as the window slides), lit by the worst level inside. A cell sits
+        // exactly under its slots on the line; the two at the ends are partial.
+        let newest = History.id(of: Date()), firstId = newest - n + 1, per = 5
+        let half = w / CGFloat(n - 1) / 2
+        for g in (firstId / per)...(newest / per) {
+            let a = max(g * per - firstId, 0), b = min(g * per + per - 1 - firstId, n - 1)
+            let left = max(x(a) - half, x0), right = min(x(b) + half, x0 + w)
+            let cell = NSRect(x: left, y: h - 12, width: right - left - 0.5, height: 8)
+            guard let worst = series[a...b].compactMap({ $0?.level }).max() else {
                 let outline = NSBezierPath(rect: cell.insetBy(dx: 0.25, dy: 0.25))
                 outline.lineWidth = 0.5
                 Ink.noData.setStroke()
@@ -465,7 +470,7 @@ private final class HistoryView: NSView {
         let axis = NSBezierPath()
         axis.move(to: NSPoint(x: x0, y: axisY))
         axis.line(to: NSPoint(x: x0 + w, y: axisY))
-        let newest = History.id(of: Date()), cal = Calendar.current
+        let cal = Calendar.current
         let start = Date(timeIntervalSince1970: Double(newest - n + 1) * History.seconds)
         let span = Double(n - 1) * History.seconds
         var hour = cal.nextDate(after: start, matching: DateComponents(minute: 0, second: 0), matchingPolicy: .nextTime)
