@@ -185,8 +185,9 @@ private extension PressureLevel {
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
-    /// The pressure lane above the chart: a warning and a critical stretch. A critical cell is also twice as tall.
-    static let warning = NSColor.labelColor.withAlphaComponent(0.4)
+    /// The pressure lane above the chart steps up with the level in both tone and height:
+    /// normal 4 pt, warning 6 pt, critical 8 pt.
+    static let warning = NSColor.labelColor.withAlphaComponent(0.45)
     static let critical = NSColor.labelColor.withAlphaComponent(0.8)
     /// Hairlines: guides.
     static let hair = NSColor.labelColor.withAlphaComponent(0.14)
@@ -430,10 +431,11 @@ private final class HistoryView: NSView {
         let cells = 96, per = n / cells
         for c in 0..<cells {
             let worst = series[(c * per)..<((c + 1) * per)].compactMap { $0?.level }.max() ?? PressureLevel.normal.rawValue
-            let critical = worst >= PressureLevel.critical.rawValue
-            (critical ? Ink.critical : worst > PressureLevel.normal.rawValue ? Ink.warning : Ink.unlit).setFill()
-            // Critical hangs 4 pt lower than the rest of the lane, so it stands out even as a single cell.
-            NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: critical ? h - 12 : h - 8, width: w / CGFloat(cells) - 0.5, height: critical ? 8 : 4).fill()
+            // The cells hang from the top of the lane: the worse the level, the longer and darker.
+            let level = worst >= PressureLevel.critical.rawValue ? 2 : worst > PressureLevel.normal.rawValue ? 1 : 0
+            [Ink.unlit, Ink.warning, Ink.critical][level].setFill()
+            let height = CGFloat(4 + 2 * level)
+            NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 4 - height, width: w / CGFloat(cells) - 0.5, height: height).fill()
         }
 
         // Time axis in local clock time: a tick at every whole hour in the window, longer at 3 h and 6 h,
