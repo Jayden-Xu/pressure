@@ -185,9 +185,12 @@ private extension PressureLevel {
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
-    /// The pressure lane above the chart: all cells the same height, the worse the level the darker.
-    static let warning = NSColor.labelColor.withAlphaComponent(0.45)
+    /// The pressure lane above the chart: all cells the same height, the worse the level the darker; a cell
+    /// with no data (the app wasn't running) is only a faint outline, so it differs from a normal one.
+    static let normal = NSColor.labelColor.withAlphaComponent(0.25)
+    static let warning = NSColor.labelColor.withAlphaComponent(0.5)
     static let critical = NSColor.labelColor.withAlphaComponent(0.8)
+    static let noData = NSColor.labelColor.withAlphaComponent(0.2)
     /// Hairlines: guides.
     static let hair = NSColor.labelColor.withAlphaComponent(0.14)
     static let tick = NSColor.labelColor.withAlphaComponent(0.4)
@@ -443,10 +446,17 @@ private final class HistoryView: NSView {
         // Pressure lane: 96 cells of 15 min, lit by the worst level inside.
         let cells = 96, per = n / cells
         for c in 0..<cells {
-            let worst = series[(c * per)..<((c + 1) * per)].compactMap { $0?.level }.max() ?? PressureLevel.normal.rawValue
+            let cell = NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 12, width: w / CGFloat(cells) - 0.5, height: 8)
+            guard let worst = series[(c * per)..<((c + 1) * per)].compactMap({ $0?.level }).max() else {
+                let outline = NSBezierPath(rect: cell.insetBy(dx: 0.25, dy: 0.25))
+                outline.lineWidth = 0.5
+                Ink.noData.setStroke()
+                outline.stroke()
+                continue
+            }
             let level = worst >= PressureLevel.critical.rawValue ? 2 : worst > PressureLevel.normal.rawValue ? 1 : 0
-            [Ink.unlit, Ink.warning, Ink.critical][level].setFill()
-            NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 12, width: w / CGFloat(cells) - 0.5, height: 8).fill()
+            [Ink.normal, Ink.warning, Ink.critical][level].setFill()
+            cell.fill()
         }
 
         // Time axis in local clock time: a tick at every whole hour in the window, longer at 3 h and 6 h,
