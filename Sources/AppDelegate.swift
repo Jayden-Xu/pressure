@@ -60,7 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Swap and level into the 24 h history; called on the monitor's existing 10 s check.
+    /// Skipped while the display is off: a lid-closed Mac still wakes for ~1 min every ~15 min (Power Nap
+    /// DarkWake, which posts no didWake) and those readings would dot the sleep gap.
     private func sample() {
+        guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
         history.record(swapBytes: FootprintScanner.swapUsedBytes(), level: monitor.level)
     }
 
