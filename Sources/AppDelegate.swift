@@ -185,11 +185,11 @@ private extension PressureLevel {
     static let hero: CGFloat = 38, body: CGFloat = 14, caption: CGFloat = 11
     static let bodyFont = NSFont.monospacedSystemFont(ofSize: body, weight: .regular)
     /// Segments, lit and unlit: the menu bar gauge's two tones, lightened.
-    static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
+    static let litAlpha: CGFloat = 0.30, unlitAlpha: CGFloat = 0.27  // lit = the lane's warning tone; unlit = lit × 0.27
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
     /// The pressure lane above the chart: all cells the same height, the worse the level the darker; a cell
-    /// with no data (the app wasn't running) is left empty.
+    /// with no data (the app wasn't running) is left empty, with a dotted line through the gap like the chart's.
     static let normal = NSColor.labelColor.withAlphaComponent(0.13)
     static let warning = NSColor.labelColor.withAlphaComponent(0.30)
     static let critical = NSColor.labelColor.withAlphaComponent(0.52)
@@ -450,16 +450,33 @@ private final class HistoryView: NSView {
         // exactly under its slots on the line; the two at the ends are partial.
         let newest = History.id(of: Date()), firstId = newest - n + 1, per = 5
         let half = w / CGFloat(n - 1) / 2
+        var gap: (from: CGFloat, to: CGFloat)?
+        func flushGap() {
+            defer { gap = nil }
+            guard let g = gap else { return }
+            let p = NSBezierPath()
+            p.move(to: NSPoint(x: g.from, y: h - 8))
+            p.line(to: NSPoint(x: g.to, y: h - 8))
+            p.setLineDash([1, 2], count: 2, phase: 0)
+            p.lineWidth = 1
+            Ink.tick.setStroke()
+            p.stroke()
+        }
         for g in (firstId / per)...(newest / per) {
             let a = max(g * per - firstId, 0), b = min(g * per + per - 1 - firstId, n - 1)
             let left = max(x(a) - half, x0), right = min(x(b) + half, x0 + w)
             let cell = NSRect(x: left, y: h - 12, width: right - left - 0.5, height: 8)
-            guard let worst = series[a...b].compactMap({ $0?.level }).max() else { continue }
+            guard let worst = series[a...b].compactMap({ $0?.level }).max() else {
+                gap = (gap?.from ?? cell.minX, cell.maxX)
+                continue
+            }
+            flushGap()
             let level = worst >= PressureLevel.critical.rawValue ? 2 : worst > PressureLevel.normal.rawValue ? 1 : 0
             [Ink.normal, Ink.warning, Ink.critical][level].setFill()
             cell.fill()
         }
 
+        flushGap()
         // Time axis in local clock time: a tick at every whole hour in the window, longer at 3 h and 6 h,
         // labeled at 00, 06, 12 and 18. The window runs from 24 h ago to the newest slot.
         let axisY = h - 96
