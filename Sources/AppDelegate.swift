@@ -185,8 +185,7 @@ private extension PressureLevel {
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
-    /// The pressure lane above the chart steps up with the level in both tone and height:
-    /// normal 4 pt, warning 6 pt, critical 8 pt.
+    /// The pressure lane above the chart: all cells the same height, the worse the level the darker.
     static let warning = NSColor.labelColor.withAlphaComponent(0.45)
     static let critical = NSColor.labelColor.withAlphaComponent(0.8)
     /// Hairlines: guides.
@@ -431,11 +430,9 @@ private final class HistoryView: NSView {
         let cells = 96, per = n / cells
         for c in 0..<cells {
             let worst = series[(c * per)..<((c + 1) * per)].compactMap { $0?.level }.max() ?? PressureLevel.normal.rawValue
-            // The cells hang from the top of the lane: the worse the level, the longer and darker.
             let level = worst >= PressureLevel.critical.rawValue ? 2 : worst > PressureLevel.normal.rawValue ? 1 : 0
             [Ink.unlit, Ink.warning, Ink.critical][level].setFill()
-            let height = CGFloat(4 + 2 * level)
-            NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 4 - height, width: w / CGFloat(cells) - 0.5, height: height).fill()
+            NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 12, width: w / CGFloat(cells) - 0.5, height: 8).fill()
         }
 
         // Time axis in local clock time: a tick at every whole hour in the window, longer at 3 h and 6 h,
