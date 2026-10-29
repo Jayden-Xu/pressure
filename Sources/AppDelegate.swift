@@ -189,11 +189,10 @@ private extension PressureLevel {
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
     /// The pressure lane above the chart: all cells the same height, the worse the level the darker; a cell
-    /// with no data (the app wasn't running) is only a faint outline, so it differs from a normal one.
-    static let normal = NSColor.labelColor.withAlphaComponent(0.25)
-    static let warning = NSColor.labelColor.withAlphaComponent(0.5)
-    static let critical = NSColor.labelColor.withAlphaComponent(0.8)
-    static let noData = NSColor.labelColor.withAlphaComponent(0.2)
+    /// with no data (the app wasn't running) is left empty.
+    static let normal = NSColor.labelColor.withAlphaComponent(0.13)
+    static let warning = NSColor.labelColor.withAlphaComponent(0.30)
+    static let critical = NSColor.labelColor.withAlphaComponent(0.52)
     /// Hairlines: guides.
     static let hair = NSColor.labelColor.withAlphaComponent(0.14)
     static let tick = NSColor.labelColor.withAlphaComponent(0.4)
@@ -455,13 +454,7 @@ private final class HistoryView: NSView {
             let a = max(g * per - firstId, 0), b = min(g * per + per - 1 - firstId, n - 1)
             let left = max(x(a) - half, x0), right = min(x(b) + half, x0 + w)
             let cell = NSRect(x: left, y: h - 12, width: right - left - 0.5, height: 8)
-            guard let worst = series[a...b].compactMap({ $0?.level }).max() else {
-                let outline = NSBezierPath(rect: cell.insetBy(dx: 0.25, dy: 0.25))
-                outline.lineWidth = 0.5
-                Ink.noData.setStroke()
-                outline.stroke()
-                continue
-            }
+            guard let worst = series[a...b].compactMap({ $0?.level }).max() else { continue }
             let level = worst >= PressureLevel.critical.rawValue ? 2 : worst > PressureLevel.normal.rawValue ? 1 : 0
             [Ink.normal, Ink.warning, Ink.critical][level].setFill()
             cell.fill()
