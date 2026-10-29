@@ -177,16 +177,17 @@ private extension PressureLevel {
     static let gaugeRadius: CGFloat = 52
     /// The header's number is centered in this width, ending at the separators.
     static let columnWidth: CGFloat = 120
-    /// The whole menu is SF Mono medium in three sizes: the header's number, everything else you read
-    /// (rows, stats, menu items), and captions (labels, axes), which are also spaced out.
+    /// The whole menu is SF Mono in three sizes: the header's number (medium), everything else you read
+    /// (rows, stats, menu items), and captions (labels, axes), which are also spaced out (regular).
     static let hero: CGFloat = 38, body: CGFloat = 14, caption: CGFloat = 11
-    static let bodyFont = NSFont.monospacedSystemFont(ofSize: body, weight: .medium)
+    static let bodyFont = NSFont.monospacedSystemFont(ofSize: body, weight: .regular)
     /// Segments, lit and unlit: the menu bar gauge's two tones, lightened.
     static let litAlpha: CGFloat = 0.5, unlitAlpha: CGFloat = 0.25  // unlit = lit × 0.25
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
-    /// The last lit segment: the gauge's scan head.
-    static let head = NSColor.labelColor.withAlphaComponent(0.9)
+    /// The pressure lane above the chart: a warning and a critical stretch.
+    static let warning = NSColor.labelColor.withAlphaComponent(0.4)
+    static let critical = NSColor.labelColor.withAlphaComponent(0.65)
     /// Hairlines: guides.
     static let hair = NSColor.labelColor.withAlphaComponent(0.14)
     static let tick = NSColor.labelColor.withAlphaComponent(0.4)
@@ -237,12 +238,12 @@ private final class HeaderView: NSView {
             p.appendArc(withCenter: c, radius: r, startAngle: a0, endAngle: a1, clockwise: true)
             p.appendArc(withCenter: c, radius: r - w, startAngle: a1, endAngle: a0, clockwise: false)
             p.close()
-            (i < level.segments ? (i == level.segments - 1 ? Ink.head : Ink.lit) : Ink.unlit).setFill()
+            (i < level.segments ? Ink.lit : Ink.unlit).setFill()
             p.fill()
         }
         // Each label centered under its gauge or number; labels share one baseline.
         // The 38 pt value is centered on the gauge's height; its column ends at the separators.
-        let label = mono(Ink.caption, .medium, Ink.text, kern: 1)
+        let label = mono(Ink.caption, .regular, Ink.text, kern: 1)
         let title = NSAttributedString(string: level.title, attributes: label)
         let unit = NSAttributedString(string: "SWAP GB", attributes: label)
         let value = NSAttributedString(string: swap, attributes: mono(Ink.hero, .medium, Ink.text, kern: 0.5))
@@ -274,8 +275,8 @@ private final class RowView: NSView {
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
     static let height: CGFloat = 36
-    /// Bar: 20 segments, so one segment is 5% of physical memory.
-    static let segments = 20, segmentGap: CGFloat = 2, barHeight: CGFloat = 4
+    /// Bar: 60 thin segments, so one segment is 1.7% of physical memory.
+    static let segments = 60, segmentGap: CGFloat = 1, barHeight: CGFloat = 3
 
     // Built once, not on every draw.
     static let labelAttributes: [NSAttributedString.Key: Any] = {
@@ -340,10 +341,11 @@ private final class RowView: NSView {
         let n = Self.segments, step = (width + Self.segmentGap) / CGFloat(n)
         let lit = max(1, Int((share * Double(n)).rounded()))
         for i in 0..<n {
-            let left = (x0 + CGFloat(i) * step).rounded()
-            let right = (x0 + CGFloat(i + 1) * step - Self.segmentGap).rounded()
+            // Edges on half points (whole pixels on a retina screen) so every segment is equally crisp.
+            let left = ((x0 + CGFloat(i) * step) * 2).rounded() / 2
+            let right = ((x0 + CGFloat(i + 1) * step - Self.segmentGap) * 2).rounded() / 2
             (i < lit ? Ink.lit : Ink.unlit).setFill()
-            NSRect(x: left, y: 7, width: right - left, height: Self.barHeight).fill()
+            NSRect(x: left, y: 8, width: right - left, height: Self.barHeight).fill()
         }
     }
 
@@ -390,7 +392,7 @@ private final class HistoryView: NSView {
             Ink.hair.setStroke()
             p.stroke()
         }
-        let caption = mono(Ink.caption, .medium, Ink.text, kern: 1)
+        let caption = mono(Ink.caption, .regular, Ink.text, kern: 1)
 
         // Swap: one line with a fill per stretch with data (the app wasn't running in the gaps).
         var run: [NSPoint] = []
@@ -428,7 +430,7 @@ private final class HistoryView: NSView {
         let cells = 96, per = n / cells
         for c in 0..<cells {
             let worst = series[(c * per)..<((c + 1) * per)].compactMap { $0?.level }.max() ?? PressureLevel.normal.rawValue
-            (worst >= PressureLevel.critical.rawValue ? Ink.head : worst > PressureLevel.normal.rawValue ? Ink.lit : Ink.unlit).setFill()
+            (worst >= PressureLevel.critical.rawValue ? Ink.critical : worst > PressureLevel.normal.rawValue ? Ink.warning : Ink.unlit).setFill()
             NSRect(x: x0 + w * CGFloat(c) / CGFloat(cells), y: h - 8, width: w / CGFloat(cells) - 0.5, height: 4).fill()
         }
 
@@ -463,7 +465,7 @@ private final class HistoryView: NSView {
                       (have ? String(format: "%.1f", Double(stats.sum) / Double(stats.count) / 100) : "--", "AVG GB")]
         for (k, block) in blocks.enumerated() {
             let cx = x0 + w * (k == 0 ? 0.25 : 0.75)
-            HeaderView.place(NSAttributedString(string: block.0, attributes: mono(Ink.body, .medium, Ink.text)), x: cx, baseline: h - 148, anchor: 0.5)
+            HeaderView.place(NSAttributedString(string: block.0, attributes: mono(Ink.body, .regular, Ink.text)), x: cx, baseline: h - 148, anchor: 0.5)
             HeaderView.place(NSAttributedString(string: block.1, attributes: caption), x: cx, baseline: h - 165, anchor: 0.5)
         }
     }
