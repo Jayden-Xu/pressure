@@ -394,11 +394,24 @@ private final class HistoryView: NSView {
         }
         let caption = mono(Ink.caption, .regular, Ink.text, kern: 1)
 
-        // Swap: one line with a fill per stretch with data (the app wasn't running in the gaps).
+        // Swap: one line with a fill per stretch with data. Where nothing was recorded (the app wasn't running)
+        // a dotted straight line joins the stretches, and runs back from the first one to the left edge.
         var run: [NSPoint] = []
+        var lastEnd: NSPoint?
+        func dotted(from a: NSPoint, to b: NSPoint) {
+            let p = NSBezierPath()
+            p.move(to: a)
+            p.line(to: b)
+            p.setLineDash([2, 3], count: 2, phase: 0)
+            p.lineWidth = 1
+            Ink.tick.setStroke()
+            p.stroke()
+        }
         func finishRun() {
             defer { run.removeAll() }
             guard let first = run.first, let last = run.last else { return }
+            if let end = lastEnd { dotted(from: end, to: first) } else if first.x > x0 + 1 { dotted(from: NSPoint(x: x0, y: first.y), to: first) }
+            lastEnd = last
             let line = NSBezierPath()
             line.move(to: first)
             for p in run.dropFirst() { line.line(to: p) }
@@ -426,6 +439,7 @@ private final class HistoryView: NSView {
             stats.count += 1
         }
         finishRun()
+        if let end = lastEnd, end.x < x0 + w - 1 { dotted(from: end, to: NSPoint(x: x0 + w, y: end.y)) }
         // Pressure lane: 96 cells of 15 min, lit by the worst level inside.
         let cells = 96, per = n / cells
         for c in 0..<cells {
