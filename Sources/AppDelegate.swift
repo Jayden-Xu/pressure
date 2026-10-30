@@ -231,7 +231,8 @@ private final class HeaderView: NSView {
     /// Where the menu's titles start, so the columns split the same span as the rows.
     private let inset: CGFloat
     private static let radius = Ink.gaugeRadius, thickness: CGFloat = 15, gap: CGFloat = 5, sweep: CGFloat = 240
-    private static let height: CGFloat = 126
+    /// Ink 10 pt from the top (gauge) and bottom (labels), like every block.
+    private static let height: CGFloat = 118
 
     init(level: PressureLevel, swap: String, inset: CGFloat) {
         self.level = level
@@ -266,8 +267,8 @@ private final class HeaderView: NSView {
         let unit = NSAttributedString(string: "SWAP GB", attributes: label)
         let value = NSAttributedString(string: swap, attributes: mono(Ink.hero, .medium, Ink.text, kern: 0.5))
         let x2 = right - Ink.columnWidth / 2
-        Self.place(title, x: c.x, baseline: 14, anchor: 0.5)
-        Self.place(unit, x: x2, baseline: 14, anchor: 0.5)
+        Self.place(title, x: c.x, baseline: 13, anchor: 0.5)
+        Self.place(unit, x: x2, baseline: 13, anchor: 0.5)
         Self.place(value, x: x2, baseline: c.y + r / 4 - 14, anchor: 0.5)
     }
 
@@ -283,8 +284,9 @@ private final class HeaderView: NSView {
     }
 }
 
-/// A hand-drawn menu row: app name left, value right in mono, and the app's last 3 h as a faint curve in the
-/// background between them (own scale: the shape says when, the number says how much), fading out at both ends.
+/// A hand-drawn menu row in two lines: app name left and value right in mono, and under them the app's last
+/// 3 h as a soft shadow in the shape of its curve across the full width (own scale: the shape says when, the
+/// number says how much). The name never meets the shadow, however long it is.
 /// A plain NSMenuItem can't do this: a disabled item is always drawn grey, whatever color its title asks for,
 /// and an enabled one highlights on hover as if it were clickable.
 @MainActor
@@ -292,9 +294,9 @@ private final class RowView: NSView {
     static let labelFont = Ink.bodyFont, valueFont = Ink.bodyFont
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
-    static let height: CGFloat = 36
-    /// The curve's box, from the bottom of the row; it starts at this fraction of the row's width and ends this far before the value.
-    static let curveBottom: CGFloat = 8, curveHeight: CGFloat = 24, curveFrom: CGFloat = 0.325, valueGap: CGFloat = 10
+    static let height: CGFloat = 60
+    /// The shadow's box, from the bottom of the row, as wide as the separators.
+    static let curveBottom: CGFloat = 10, curveHeight: CGFloat = 19
 
     // Built once, not on every draw.
     static let labelAttributes: [NSAttributedString.Key: Any] = {
@@ -307,7 +309,6 @@ private final class RowView: NSView {
         right.alignment = .right
         return [.font: valueFont, .foregroundColor: Ink.text, .paragraphStyle: right]
     }()
-    static let fade = NSGradient(colors: [.clear, .black, .black, .clear], atLocations: [0, 0.12, 0.88, 1], colorSpace: .deviceGray)
     static let wash = NSGradient(starting: Ink.text.withAlphaComponent(0.2), ending: Ink.text.withAlphaComponent(0.04))
 
     /// Shared column widths so values line up across rows.
@@ -350,26 +351,29 @@ private final class RowView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         drawCurve()
         let line = Self.labelFont.ascender - Self.labelFont.descender
-        // Name and value share one baseline, 13 above the bottom.
-        let y = 13 + Self.labelFont.descender
+        // Name and value share one baseline, 40 above the bottom; the shadow is below.
+        let y = 40 + Self.labelFont.descender
         (label as NSString).draw(in: NSRect(x: layout.inset, y: y, width: layout.labelWidth, height: line),
                                  withAttributes: Self.labelAttributes)
         (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.trailing - layout.valueWidth, y: y, width: layout.valueWidth, height: line),
                                  withAttributes: Self.valueAttributes)
     }
 
-    /// A soft shadow under the text in the shape of the app's curve (no line): one fill per stretch with data, and a dotted
-    /// straight line where nothing was recorded (joining the stretches, and back to the left edge before the first).
-    /// Drawn into a transparency layer and cut by a horizontal fade.
+    /// A soft shadow in the shape of the app's curve (no line): one fill per stretch with data, and a dotted straight
+    /// line where nothing was recorded (joining the stretches, and back to the left edge before the first).
     private func drawCurve() {
         let known = series.compactMap { $0 }
-        guard known.count > 1, let peak = known.max(), peak > 0, let ctx = NSGraphicsContext.current?.cgContext else { return }
-        // From a third of the way in (names may overlap it) to just before the value, which it never touches.
-        let x0 = bounds.width * Self.curveFrom, w = bounds.maxX - Self.trailing - layout.valueWidth - Self.valueGap - x0
+        guard known.count > 1, let peak = known.max(), peak > 0 else { return }
+        let x0 = layout.inset, w = bounds.maxX - Self.trailing - x0
         let base = Self.curveBottom, h = Self.curveHeight, n = series.count
         func point(_ i: Int, _ v: Int) -> NSPoint { NSPoint(x: x0 + w * CGFloat(i) / CGFloat(n - 1), y: base + CGFloat(v) / CGFloat(peak) * h) }
 
-        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        let floor = NSBezierPath()
+        floor.move(to: NSPoint(x: x0, y: base))
+        floor.line(to: NSPoint(x: x0 + w, y: base))
+        floor.lineWidth = 0.6
+        Ink.hair.setStroke()
+        floor.stroke()
         var run: [NSPoint] = []
         var lastEnd: NSPoint?
         func dotted(from a: NSPoint, to b: NSPoint) {
@@ -404,9 +408,6 @@ private final class RowView: NSView {
         }
         finishRun()
         if let end = lastEnd, end.x < x0 + w - 1 { dotted(from: end, to: NSPoint(x: x0 + w, y: end.y)) }
-        ctx.setBlendMode(.destinationIn)
-        Self.fade?.draw(in: NSRect(x: x0, y: 0, width: w, height: bounds.height), angle: 0)
-        ctx.endTransparencyLayer()
     }
 
     static func width(_ string: String, _ font: NSFont) -> CGFloat {
@@ -421,7 +422,8 @@ private final class RowView: NSView {
 private final class HistoryView: NSView {
     private let series: [History.Slot?]
     private let inset: CGFloat
-    static let height: CGFloat = 172
+    /// Drawn in a 172 pt box, lifted by `lift` inside a view 12 pt taller: ink 10 pt from the top and bottom.
+    static let height: CGFloat = 184, lift: CGFloat = 6
 
     init(series: [History.Slot?], inset: CGFloat) {
         self.series = series
@@ -433,7 +435,13 @@ private final class HistoryView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let n = series.count, h = Self.height
+        let n = series.count, h: CGFloat = 172
+        // Every block keeps its ink 10 pt from the top and bottom of its view, in both apps.
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let lift = NSAffineTransform()
+        lift.translateX(by: 0, yBy: Self.lift)
+        lift.concat()
         let x0 = inset, w = bounds.maxX - RowView.trailing - x0
         let top = h - 24, bottom = h - 94
         // The top guide is the highest whole GB above the peak, at least 2.
