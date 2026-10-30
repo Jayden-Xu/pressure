@@ -84,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu
 
     /// Only the biggest consumers.
-    private static let topN = 5
+    private static let topN = 3
 
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)

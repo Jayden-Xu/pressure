@@ -3,11 +3,11 @@ import Foundation
 /// Memory of the biggest apps over the last 3 h, one slot per 3 min: the same slots as `History`, so the row
 /// curves line up with the chart's resolution. A scan of every process runs only when a new slot starts (from
 /// the 10 s check that already runs, no timer of its own) or when the menu opens; each keeps the top `keep`
-/// apps, so an app that climbs into the menu's top 5 already has its own past. Held in memory, written with
+/// apps, so an app that climbs into the menu's top 3 already has its own past. Held in memory, written with
 /// History's hourly flush (and on sleep / quit), pruned of apps that left the window.
 @MainActor
 final class AppHistory {
-    static let count = 60, keep = 10
+    static let count = 60, keep = 5
     private let defaults = UserDefaults.standard
     private var ids = [Int](repeating: -1, count: count)
     /// Per app path, 0.01 GB per slot; 0 = outside the top `keep` in that slot.
