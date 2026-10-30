@@ -8,11 +8,14 @@ private func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
 
 /// One menu row: an app and every process it is responsible for, summed.
 struct MemoryEntry {
-    let name: String
+    /// Outermost .app path: the app's identity across scans.
+    let path: String
     let bytes: UInt64
+    /// Read lazily, only for rows that are shown.
+    var name: String { FootprintScanner.displayName(of: path) }
 }
 
-/// Runs only when the menu opens. Nothing is cached across opens, so every open shows fresh numbers.
+/// Runs when the menu opens, and once per 3 min slot (AppDelegate.sample) to feed AppHistory. Nothing is cached, so every scan is fresh.
 enum FootprintScanner {
     static func topEntries(limit: Int) -> [MemoryEntry] {
         var apps: [String: UInt64] = [:]   // bytes, keyed by outermost .app path
@@ -35,10 +38,7 @@ enum FootprintScanner {
             apps[app, default: 0] += bytes
         }
 
-        // Display names are read lazily: only for rows that are shown.
-        return apps.sorted { $0.value > $1.value }.prefix(limit).map {
-            MemoryEntry(name: displayName(of: $0.key), bytes: $0.value)
-        }
+        return apps.sorted { $0.value > $1.value }.prefix(limit).map { MemoryEntry(path: $0.key, bytes: $0.value) }
     }
 
     static func swapUsedBytes() -> UInt64 {
@@ -80,7 +80,7 @@ enum FootprintScanner {
     }
 
     /// Finder's localized name ("活动监视器"), without the extension even when Finder shows extensions.
-    private static func displayName(of app: String) -> String {
+    static func displayName(of app: String) -> String {
         let name = FileManager.default.displayName(atPath: app)
         return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
     }
