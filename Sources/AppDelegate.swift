@@ -293,8 +293,8 @@ private final class RowView: NSView {
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
     static let height: CGFloat = 36
-    /// The curve's box, from the bottom of the row; it spans these fractions of the row's width.
-    static let curveBottom: CGFloat = 8, curveHeight: CGFloat = 24, curveFrom: CGFloat = 0.325, curveTo: CGFloat = 0.78
+    /// The curve's box, from the bottom of the row; it starts at this fraction of the row's width and ends this far before the value.
+    static let curveBottom: CGFloat = 8, curveHeight: CGFloat = 24, curveFrom: CGFloat = 0.325, valueGap: CGFloat = 10
 
     // Built once, not on every draw.
     static let labelAttributes: [NSAttributedString.Key: Any] = {
@@ -364,7 +364,8 @@ private final class RowView: NSView {
     private func drawCurve() {
         let known = series.compactMap { $0 }
         guard known.count > 1, let peak = known.max(), peak > 0, let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let x0 = bounds.width * Self.curveFrom, w = bounds.width * (Self.curveTo - Self.curveFrom)
+        // From a third of the way in (names may overlap it) to just before the value, which it never touches.
+        let x0 = bounds.width * Self.curveFrom, w = bounds.maxX - Self.trailing - layout.valueWidth - Self.valueGap - x0
         let base = Self.curveBottom, h = Self.curveHeight, n = series.count
         func point(_ i: Int, _ v: Int) -> NSPoint { NSPoint(x: x0 + w * CGFloat(i) / CGFloat(n - 1), y: base + CGFloat(v) / CGFloat(peak) * h) }
 
