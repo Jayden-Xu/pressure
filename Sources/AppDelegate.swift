@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var monitor: PressureMonitor!
     private var hotKey: HotKey?
     private let history = History()
-    private let appHistory = AppHistory()
     private let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 
     static func main() {
@@ -37,13 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // kill / pkill (and so a reinstall) end the process without applicationWillTerminate: save first.
         signal(SIGTERM, SIG_IGN)
         termination.setEventHandler { [weak self] in
-            self?.flushAll()
+            self?.history.flush()
             NSApp.terminate(nil)
         }
         termination.activate()
         // Nothing more is recorded while asleep, so save then rather than wake the disk for it.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.flushAll() }
+            MainActor.assumeIsolated { self?.history.flush() }
         }
         monitor.onTick = { [weak self] in MainActor.assumeIsolated { self?.sample() } }
         showIcon(for: monitor.level)
@@ -57,24 +56,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ note: Notification) {
-        flushAll()
-    }
-
-    private func flushAll() {
         history.flush()
-        appHistory.flush()
     }
 
     /// Swap and level into the 24 h history; called on the monitor's existing 10 s check.
     /// Skipped while the display is off: a lid-closed Mac still wakes for ~1 min every ~15 min (Power Nap
     /// DarkWake, which posts no didWake) and those readings would dot the sleep gap.
-    /// The first check of each 3 min slot also scans every process for the per-app history (the menu's scan
-    /// covers it when the menu opens first).
-    private func sample(scanApps: Bool = true) {
+    private func sample() {
         guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
         history.record(swapBytes: FootprintScanner.swapUsedBytes(), level: monitor.level)
-        let id = History.id(of: Date())
-        if scanApps, !appHistory.hasSlot(id) { appHistory.record(FootprintScanner.topEntries(limit: AppHistory.keep), id: id) }
     }
 
     private func showIcon(for level: PressureLevel) {
@@ -84,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu
 
     /// Only the biggest consumers.
-    private static let topN = 3
+    private static let topN = 5
 
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)
@@ -92,18 +82,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Opening the menu reads everything fresh (level, so the icon follows too; swap) into memory, so the
         // chart ends at this very moment. It is drawn from memory: nothing is written here.
         monitor.refresh()
-        sample(scanApps: false)
-        // One scan serves the rows and, merged into the current slot, the history.
-        let scan = FootprintScanner.topEntries(limit: AppHistory.keep)
-        appHistory.record(scan, id: History.id(of: Date()))
-        let entries = Array(scan.prefix(Self.topN))
+        sample()
+        let entries = FootprintScanner.topEntries(limit: Self.topN)
 
         // Titles start 16 pt in, or 24 pt once any item shows a checkmark (the state column).
         // Separators always end 16 pt from the right. The hand-drawn rows follow the titles.
         let loginOn = SMAppService.mainApp.status == .enabled
         let inset: CGFloat = loginOn ? 24 : 16
 
-        let rows = entries.map { (label: $0.name, value: gb($0.bytes), series: appHistory.values(of: $0.path)) }
+        // App bars: the biggest app is a full bar, the others the square root of their size relative to it,
+        // so small apps stay readable next to a big one.
+        let biggest = Double(entries.first?.bytes ?? 1)
+        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: (Double($0.bytes) / biggest).squareRoot()) }
         let layout = RowView.Layout(rows.map { ($0.label, $0.value) }, inset: inset)
 
         menu.removeAllItems()
@@ -117,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         for row in rows {
             let item = NSMenuItem()
-            item.view = RowView(label: row.label, value: row.value, series: row.series, layout: layout)
+            item.view = RowView(label: row.label, value: row.value, share: row.share, layout: layout)
             menu.addItem(item)
         }
         if entries.isEmpty {
@@ -200,7 +190,7 @@ private extension PressureLevel {
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
     /// The pressure lane above the chart: all cells the same height, the worse the level the darker; a cell
-    /// with no data (the app wasn't running) is left empty, with a dotted line through the gap like the chart's.
+    /// with no data (the app wasn't running) is left empty, with a hatched band across the gap like the chart's.
     static let normal = NSColor.labelColor.withAlphaComponent(0.13)
     static let warning = NSColor.labelColor.withAlphaComponent(0.30)
     static let critical = NSColor.labelColor.withAlphaComponent(0.52)
@@ -284,9 +274,8 @@ private final class HeaderView: NSView {
     }
 }
 
-/// A hand-drawn menu row in two lines: app name left and value right in mono, and under them the app's last
-/// 3 h as a soft shadow in the shape of its curve across the full width (own scale: the shape says when, the
-/// number says how much). The name never meets the shadow, however long it is.
+/// A hand-drawn menu row: app name, value right-aligned in mono, and a segmented bar below,
+/// cut like the menu bar gauge.
 /// A plain NSMenuItem can't do this: a disabled item is always drawn grey, whatever color its title asks for,
 /// and an enabled one highlights on hover as if it were clickable.
 @MainActor
@@ -294,9 +283,9 @@ private final class RowView: NSView {
     static let labelFont = Ink.bodyFont, valueFont = Ink.bodyFont
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
-    static let height: CGFloat = 60
-    /// The shadow's box, from the bottom of the row, as wide as the separators.
-    static let curveBottom: CGFloat = 10, curveHeight: CGFloat = 19
+    static let height: CGFloat = 36
+    /// Bar: 60 thin segments, so one segment is 1.7% of physical memory.
+    static let segments = 60, segmentGap: CGFloat = 1, barHeight: CGFloat = 3
 
     // Built once, not on every draw.
     static let labelAttributes: [NSAttributedString.Key: Any] = {
@@ -309,7 +298,6 @@ private final class RowView: NSView {
         right.alignment = .right
         return [.font: valueFont, .foregroundColor: Ink.text, .paragraphStyle: right]
     }()
-    static let wash = NSGradient(starting: Ink.text.withAlphaComponent(0.2), ending: Ink.text.withAlphaComponent(0.04))
 
     /// Shared column widths so values line up across rows.
     @MainActor
@@ -331,14 +319,14 @@ private final class RowView: NSView {
 
     private let label: String
     private let value: String
-    /// 0.01 GB per 3 min slot, oldest first; nil where nothing was scanned.
-    private let series: [Int?]
+    /// Bar length as a fraction of the full bar.
+    private let share: Double
     private let layout: Layout
 
-    init(label: String, value: String, series: [Int?], layout: Layout) {
+    init(label: String, value: String, share: Double, layout: Layout) {
         self.label = label
         self.value = value
-        self.series = series
+        self.share = share
         self.layout = layout
         super.init(frame: NSRect(x: 0, y: 0, width: layout.minWidth, height: Self.height))
         // Stretch with the menu so values sit at its right edge, in line with key equivalents.
@@ -349,65 +337,25 @@ private final class RowView: NSView {
 
     // Drawn directly rather than with two NSTextFields per row: half the memory each time the menu opens.
     override func draw(_ dirtyRect: NSRect) {
-        drawCurve()
         let line = Self.labelFont.ascender - Self.labelFont.descender
-        // Name and value share one baseline, 40 above the bottom; the shadow is below.
-        let y = 40 + Self.labelFont.descender
+        // Name and value share one baseline, 21 above the bottom; the bar is below it.
+        let y = 21 + Self.labelFont.descender
         (label as NSString).draw(in: NSRect(x: layout.inset, y: y, width: layout.labelWidth, height: line),
                                  withAttributes: Self.labelAttributes)
         (value as NSString).draw(in: NSRect(x: bounds.maxX - Self.trailing - layout.valueWidth, y: y, width: layout.valueWidth, height: line),
                                  withAttributes: Self.valueAttributes)
-    }
 
-    /// A soft shadow in the shape of the app's curve (no line): one fill per stretch with data, and a dotted straight
-    /// line where nothing was recorded (joining the stretches, and back to the left edge before the first).
-    private func drawCurve() {
-        let known = series.compactMap { $0 }
-        guard known.count > 1, let peak = known.max(), peak > 0 else { return }
-        let x0 = layout.inset, w = bounds.maxX - Self.trailing - x0
-        let base = Self.curveBottom, h = Self.curveHeight, n = series.count
-        func point(_ i: Int, _ v: Int) -> NSPoint { NSPoint(x: x0 + w * CGFloat(i) / CGFloat(n - 1), y: base + CGFloat(v) / CGFloat(peak) * h) }
-
-        let floor = NSBezierPath()
-        floor.move(to: NSPoint(x: x0, y: base))
-        floor.line(to: NSPoint(x: x0 + w, y: base))
-        floor.lineWidth = 0.6
-        Ink.hair.setStroke()
-        floor.stroke()
-        var run: [NSPoint] = []
-        var lastEnd: NSPoint?
-        func dotted(from a: NSPoint, to b: NSPoint) {
-            let p = NSBezierPath()
-            p.move(to: a)
-            p.line(to: b)
-            p.setLineDash([2, 3], count: 2, phase: 0)
-            p.lineWidth = 1
-            Ink.tick.withAlphaComponent(0.5).setStroke()
-            p.stroke()
+        // Segment edges rounded to whole points so every segment is equally crisp.
+        let x0 = layout.inset, width = bounds.maxX - Self.trailing - x0
+        let n = Self.segments, step = (width + Self.segmentGap) / CGFloat(n)
+        let lit = max(1, Int((share * Double(n)).rounded()))
+        for i in 0..<n {
+            // Edges on half points (whole pixels on a retina screen) so every segment is equally crisp.
+            let left = ((x0 + CGFloat(i) * step) * 2).rounded() / 2
+            let right = ((x0 + CGFloat(i + 1) * step - Self.segmentGap) * 2).rounded() / 2
+            (i < lit ? Ink.lit : Ink.unlit).setFill()
+            NSRect(x: left, y: 8, width: right - left, height: Self.barHeight).fill()
         }
-        func finishRun() {
-            defer { run.removeAll() }
-            guard let first = run.first, let last = run.last else { return }
-            if let end = lastEnd { dotted(from: end, to: first) } else if first.x > x0 + 1 { dotted(from: NSPoint(x: x0, y: first.y), to: first) }
-            lastEnd = last
-            let line = NSBezierPath()
-            line.move(to: first)
-            for p in run.dropFirst() { line.line(to: p) }
-            let area = line.copy() as! NSBezierPath
-            area.line(to: NSPoint(x: last.x, y: base))
-            area.line(to: NSPoint(x: first.x, y: base))
-            area.close()
-            NSGraphicsContext.saveGraphicsState()
-            area.addClip()
-            Self.wash?.draw(from: NSPoint(x: 0, y: base + h), to: NSPoint(x: 0, y: base), options: [])
-            NSGraphicsContext.restoreGraphicsState()
-        }
-        for (i, v) in series.enumerated() {
-            guard let v else { finishRun(); continue }
-            run.append(point(i, v))
-        }
-        finishRun()
-        if let end = lastEnd, end.x < x0 + w - 1 { dotted(from: end, to: NSPoint(x: x0 + w, y: end.y)) }
     }
 
     static func width(_ string: String, _ font: NSFont) -> CGFloat {
@@ -462,24 +410,36 @@ private final class HistoryView: NSView {
         }
         let caption = mono(Ink.caption, .regular, Ink.text, kern: 1)
 
-        // Swap: one line with a fill per stretch with data. Where nothing was recorded (the app wasn't running)
-        // a dotted straight line joins the stretches, and runs back from the first one to the left edge.
-        var run: [NSPoint] = []
-        var lastEnd: NSPoint?
-        func dotted(from a: NSPoint, to b: NSPoint) {
-            let p = NSBezierPath()
-            p.move(to: a)
-            p.line(to: b)
-            p.setLineDash([2, 3], count: 2, phase: 0)
-            p.lineWidth = 1
-            Ink.tick.setStroke()
-            p.stroke()
+        // Gaps (no data): a faint hatched band across the plot and the lane, from the last point before to the
+        // first after (or the chart's edge).
+        var i = 0
+        while i < n {
+            guard series[i] == nil else { i += 1; continue }
+            var j = i
+            while j + 1 < n, series[j + 1] == nil { j += 1 }
+            let left = i == 0 ? x0 : x(i - 1), right = j == n - 1 ? x0 + w : x(j + 1)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: NSRect(x: left, y: bottom, width: right - left, height: h - 4 - bottom)).addClip()
+            let hatch = NSBezierPath()
+            var hx = left - (h - bottom)
+            while hx < right {
+                hatch.move(to: NSPoint(x: hx, y: bottom))
+                hatch.line(to: NSPoint(x: hx + (h - 4 - bottom), y: h - 4))
+                hx += 5
+            }
+            hatch.lineWidth = 0.6
+            Ink.text.withAlphaComponent(0.09).setStroke()
+            hatch.stroke()
+            NSGraphicsContext.restoreGraphicsState()
+            i = j + 1
         }
+
+        // Swap: one line with a fill per stretch with data. Where nothing was recorded (the app wasn't running)
+        // the plot and lane carry a faint hatched band instead of a line.
+        var run: [NSPoint] = []
         func finishRun() {
             defer { run.removeAll() }
             guard let first = run.first, let last = run.last else { return }
-            if let end = lastEnd { dotted(from: end, to: first) } else if first.x > x0 + 1 { dotted(from: NSPoint(x: x0, y: first.y), to: first) }
-            lastEnd = last
             let line = NSBezierPath()
             line.move(to: first)
             for p in run.dropFirst() { line.line(to: p) }
@@ -507,39 +467,23 @@ private final class HistoryView: NSView {
             stats.count += 1
         }
         finishRun()
-        if let end = lastEnd, end.x < x0 + w - 1 { dotted(from: end, to: NSPoint(x: x0 + w, y: end.y)) }
         // Pressure lane: one cell per real quarter hour (5 slots of 3 min, counted from the clock, not from the
         // left edge, so cells keep the same slots as the window slides), lit by the worst level inside. A cell sits
         // exactly under its slots on the line; the two at the ends are partial.
         let newest = History.id(of: Date()), firstId = newest - n + 1, per = 5
         let half = w / CGFloat(n - 1) / 2
-        var gap: (from: CGFloat, to: CGFloat)?
-        func flushGap() {
-            defer { gap = nil }
-            guard let g = gap else { return }
-            let p = NSBezierPath()
-            p.move(to: NSPoint(x: g.from, y: h - 8))
-            p.line(to: NSPoint(x: g.to, y: h - 8))
-            p.setLineDash([1, 2], count: 2, phase: 0)
-            p.lineWidth = 1
-            Ink.tick.setStroke()
-            p.stroke()
-        }
         for g in (firstId / per)...(newest / per) {
             let a = max(g * per - firstId, 0), b = min(g * per + per - 1 - firstId, n - 1)
             let left = max(x(a) - half, x0), right = min(x(b) + half, x0 + w)
             let cell = NSRect(x: left, y: h - 12, width: right - left - 0.5, height: 8)
             guard let worst = series[a...b].compactMap({ $0?.level }).max() else {
-                gap = (gap?.from ?? cell.minX, cell.maxX)
                 continue
             }
-            flushGap()
             let level = worst >= PressureLevel.critical.rawValue ? 2 : worst > PressureLevel.normal.rawValue ? 1 : 0
             [Ink.normal, Ink.warning, Ink.critical][level].setFill()
             cell.fill()
         }
 
-        flushGap()
         // Time axis in local clock time: a tick at every whole hour in the window, longer at 3 h and 6 h,
         // labeled at 00, 06, 12 and 18. The window runs from 24 h ago to the newest slot.
         let axisY = h - 96
