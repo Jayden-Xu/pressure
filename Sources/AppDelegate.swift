@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu
 
     /// Only the biggest consumers.
-    private static let topN = 5
+    private static let topN = 3
 
     // Rebuilt on every open: one scan, no cache, nothing runs while the menu is closed.
     // (menuNeedsUpdate rather than menuWillOpen: it is AppKit's hook for changing items before display.)
@@ -110,6 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let chart = NSMenuItem()
         chart.view = HistoryView(series: history.series(), inset: inset)
         menu.addItem(chart)
+        menu.addItem(.separator())
+        let week = NSMenuItem()
+        week.view = WeekView(history.weekDays(), inset: inset)
+        menu.addItem(week)
         menu.addItem(.separator())
         for row in rows {
             let item = NSMenuItem()
@@ -502,6 +506,74 @@ private final class HistoryView: NSView {
             let cx = x0 + w * (k == 0 ? 0.25 : 0.75)
             HeaderView.place(NSAttributedString(string: block.0, attributes: mono(Ink.body, .regular, Ink.text)), x: cx, baseline: h - 148, anchor: 0.5)
             HeaderView.place(NSAttributedString(string: block.1, attributes: caption), x: cx, baseline: h - 165, anchor: 0.5)
+        }
+    }
+}
+
+/// This week as seven rings, Monday first, laid out like dimmer's week: each a 240° arc of the share of that
+/// day's measured time spent under pressure (warning + critical), the highest day of the week full; critical
+/// first in the darker tone, then warning. The share is under each ring; "--" for a day with nothing measured.
+/// Today's text is darker, days still to come are empty.
+@MainActor
+private final class WeekView: NSView {
+    /// Seconds at normal, warning and critical per day; nil for days still to come.
+    private let days: [[Double]?]
+    private let inset: CGFloat
+    /// Ink starts 10 pt from the top (the ring) and ends 10 pt from the bottom (the shares), like every block.
+    static let height: CGFloat = 64
+    private static let radius: CGFloat = 17, thickness: CGFloat = 5
+
+    init(_ days: [[Double]?], inset: CGFloat) {
+        self.days = days
+        self.inset = inset
+        super.init(frame: NSRect(x: 0, y: 0, width: Ink.menuWidth, height: Self.height))
+        autoresizingMask = .width
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Shares of the day measured: (warning, critical); nil when nothing was measured.
+    private static func shares(_ day: [Double]) -> (warning: Double, critical: Double)? {
+        let total = day.reduce(0, +)
+        return total > 0 ? (day[1] / total, day[2] / total) : nil
+    }
+
+    private static func percent(_ share: Double) -> String {
+        let p = share * 100
+        return p > 0 && p < 0.5 ? "<1%" : "\(Int(p.rounded()))%"
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let h = Self.height, x0 = inset, w = bounds.maxX - RowView.trailing - x0
+        let scale = days.compactMap { $0.flatMap(Self.shares) }.map { $0.warning + $0.critical }.max() ?? 0
+        let today = days.lastIndex { $0 != nil } ?? 0
+        let r = Self.radius, col = w / 7, cy = h - 27
+        for (i, day) in days.enumerated() {
+            let cx = x0 + col * (CGFloat(i) + 0.5), now = i == today
+            // Open at the bottom like the header's gauge, starting at the lower left.
+            func arc(from start: CGFloat, _ sweep: CGFloat, _ color: NSColor) {
+                guard sweep > 0 else { return }
+                let p = NSBezierPath()
+                p.appendArc(withCenter: NSPoint(x: cx, y: cy), radius: r - Self.thickness / 2, startAngle: start, endAngle: start - sweep, clockwise: true)
+                p.lineWidth = Self.thickness
+                p.lineCapStyle = .butt
+                color.setStroke()
+                p.stroke()
+            }
+            arc(from: 210, 240, Ink.unlit)
+            let share = day.flatMap(Self.shares)
+            if let share, scale > 0 {
+                let critical = 240 * CGFloat(share.critical / scale), warning = 240 * CGFloat(share.warning / scale)
+                arc(from: 210, critical, Ink.critical)
+                arc(from: 210 - critical, warning, Ink.warning)
+            }
+            let weight: NSFont.Weight = now ? .medium : .regular
+            HeaderView.place(NSAttributedString(string: ["M", "T", "W", "T", "F", "S", "S"][i], attributes: mono(Ink.caption, weight, Ink.text, kern: 1)),
+                             x: cx, baseline: cy - 4, anchor: 0.5)
+            if day != nil {
+                let text = share.map { Self.percent($0.warning + $0.critical) } ?? "--"
+                HeaderView.place(NSAttributedString(string: text, attributes: mono(Ink.caption, weight, Ink.text)), x: cx, baseline: 13, anchor: 0.5)
+            }
         }
     }
 }
