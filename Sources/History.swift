@@ -37,24 +37,6 @@ final class History {
         }
         guard let flat = defaults.array(forKey: "history") as? [Int], flat.count == Self.count * 3 else { return }
         for i in 0..<Self.count { ring[i] = Slot(id: flat[3 * i], swap: flat[3 * i + 1], level: flat[3 * i + 2]) }
-        if !defaults.bool(forKey: "weekSeeded") { seedWeek() }
-    }
-
-    /// The week rings came after the 24 h history: once, rebuild this week's days that the ring still holds from
-    /// its recorded slots, 3 min each at the slot's level (its highest, so pressure can come out a little high).
-    /// The ring holds every slot the app was running, so it covers what was measured on those days so far.
-    private func seedWeek() {
-        guard let start = Self.calendar.dateInterval(of: .weekOfYear, for: Date())?.start else { return }
-        var days: [Int: [Double]] = [:]
-        for slot in ring where slot.id >= 0 {
-            let date = Date(timeIntervalSince1970: Double(slot.id) * Self.seconds)
-            guard date >= start else { continue }
-            let day = Int(Self.calendar.startOfDay(for: date).timeIntervalSince1970)
-            let k = slot.level >= PressureLevel.critical.rawValue ? 2 : slot.level >= PressureLevel.warning.rawValue ? 1 : 0
-            days[day, default: [0, 0, 0]][k] += Self.seconds
-        }
-        for (day, levels) in days { week[day] = levels }
-        dirty = true
     }
 
     static func id(of date: Date) -> Int { Int(date.timeIntervalSince1970 / seconds) }
@@ -96,7 +78,6 @@ final class History {
         guard dirty else { return }
         defaults.set(ring.flatMap { [$0.id, $0.swap, $0.level] }, forKey: "history")
         defaults.set(Dictionary(uniqueKeysWithValues: week.map { (String($0.key), $0.value) }), forKey: "week")
-        defaults.set(true, forKey: "weekSeeded")
         dirty = false
     }
 
