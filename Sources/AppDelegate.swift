@@ -398,10 +398,14 @@ private final class HistoryView: NSView {
         lift.concat()
         let x0 = inset, w = bounds.maxX - RowView.trailing - x0
         let top = h - 24, bottom = h - 94
-        // The top guide is the highest whole GB above the peak, at least 2.
-        let guide = max(2, ((series.compactMap { $0?.swap }.max() ?? 0) + 99) / 100)
+        // The top guide is the first step at or above the peak: 0.25 GB, then ×1.5 and ×2 in turn
+        // (0.25, 0.375, 0.5, 0.75, 1, 1.5, 2, 3 GB…), so the peak always reaches at least 2/3 of the plot.
+        var guide = 0.25
+        let peak = Double(series.compactMap { $0?.swap }.max() ?? 0) / 100
+        while guide * 1.5 < peak { guide *= 2 }
+        if guide < peak { guide *= 1.5 }
         func x(_ i: Int) -> CGFloat { x0 + w * CGFloat(i) / CGFloat(n - 1) }
-        func y(_ s: History.Slot) -> CGFloat { bottom + CGFloat(s.swap) / 100 / CGFloat(guide) * (top - bottom) }
+        func y(_ s: History.Slot) -> CGFloat { bottom + CGFloat(Double(s.swap) / 100 / guide) * (top - bottom) }
 
         // Guides: the bottom, the middle and the top (dotted).
         for g in 0...2 {
