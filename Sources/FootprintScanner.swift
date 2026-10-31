@@ -41,6 +41,22 @@ enum FootprintScanner {
         }
     }
 
+    /// Memory Used as Activity Monitor counts it: app memory (anonymous pages, less purgeable) + wired + compressed.
+    /// Cached files and free pages are left out, so this is what the apps are actually holding.
+    static func usedMemoryBytes() -> UInt64 {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics64(host, HOST_VM_INFO64, $0, &count) }
+        }
+        guard status == KERN_SUCCESS else { return 0 }
+        let app = UInt64(stats.internal_page_count) - min(UInt64(stats.internal_page_count), UInt64(stats.purgeable_count))
+        return (app + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)) * UInt64(vm_kernel_page_size)
+    }
+
+    /// One send right for the life of the process, rather than a new one on every menu open.
+    private static let host = mach_host_self()
+
     static func swapUsedBytes() -> UInt64 {
         var usage = xsw_usage()
         var size = MemoryLayout<xsw_usage>.size

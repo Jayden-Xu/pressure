@@ -44,6 +44,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.history.flush() }
         }
+        // On wake, record at once (which also fills the slots slept through) instead of waiting for the next check.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.monitor.refresh()
+                self?.sample()
+            }
+        }
         monitor.onTick = { [weak self] in MainActor.assumeIsolated { self?.sample() } }
         showIcon(for: monitor.level)
         sample()
@@ -59,11 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         history.flush()
     }
 
-    /// Swap and level into the 24 h history; called on the monitor's existing 10 s check.
-    /// Skipped while the display is off: a lid-closed Mac still wakes for ~1 min every ~15 min (Power Nap
-    /// DarkWake, which posts no didWake) and those readings would dot the sleep gap.
+    /// Swap and level into the 24 h history; called on the monitor's existing 10 s check, display on or off.
+    /// Nothing leaves a gap: History fills slots missed (asleep, off, app quit) with the last reading.
     private func sample() {
-        guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
         history.record(swapBytes: FootprintScanner.swapUsedBytes(), level: monitor.level)
     }
 
@@ -84,16 +89,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor.refresh()
         sample()
         let entries = FootprintScanner.topEntries(limit: Self.topN)
+        let used = FootprintScanner.usedMemoryBytes()
 
         // Titles start 16 pt in, or 24 pt once any item shows a checkmark (the state column).
         // Separators always end 16 pt from the right. The hand-drawn rows follow the titles.
         let loginOn = SMAppService.mainApp.status == .enabled
         let inset: CGFloat = loginOn ? 24 : 16
 
-        // App bars: the biggest app is a full bar, the others the square root of their size relative to it,
-        // so small apps stay readable next to a big one.
-        let biggest = Double(entries.first?.bytes ?? 1)
-        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: (Double($0.bytes) / biggest).squareRoot()) }
+        // App bars: each app's share of the memory in use (Activity Monitor's Memory Used), so a full bar
+        // would be an app holding all of it.
+        let whole = Double(max(used, entries.first?.bytes ?? 1))
+        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: min(1, Double($0.bytes) / whole)) }
         let layout = RowView.Layout(rows.map { ($0.label, $0.value) }, inset: inset)
 
         menu.removeAllItems()
@@ -190,7 +196,7 @@ private extension PressureLevel {
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
     /// The pressure lane above the chart: all cells the same height, the worse the level the darker; a cell
-    /// with no data (the app wasn't running) is left empty, with a hatched band across the gap like the chart's.
+    /// with no data (only before the first reading ever) is left empty.
     static let normal = NSColor.labelColor.withAlphaComponent(0.13)
     static let warning = NSColor.labelColor.withAlphaComponent(0.30)
     static let critical = NSColor.labelColor.withAlphaComponent(0.52)
@@ -284,7 +290,7 @@ private final class RowView: NSView {
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
     static let height: CGFloat = 36
-    /// Bar: 60 thin segments, so one segment is 1.7% of physical memory.
+    /// Bar: 60 thin segments, so one segment is 1.7% of the memory in use.
     static let segments = 60, segmentGap: CGFloat = 1, barHeight: CGFloat = 3
 
     // Built once, not on every draw.
@@ -392,10 +398,14 @@ private final class HistoryView: NSView {
         lift.concat()
         let x0 = inset, w = bounds.maxX - RowView.trailing - x0
         let top = h - 24, bottom = h - 94
-        // The top guide is the highest whole GB above the peak, at least 2.
-        let guide = max(2, ((series.compactMap { $0?.swap }.max() ?? 0) + 99) / 100)
+        // The top guide is the first step at or above the peak: 0.25 GB, then ×1.5 and ×2 in turn
+        // (0.25, 0.375, 0.5, 0.75, 1, 1.5, 2, 3 GB…), so the peak always reaches at least 2/3 of the plot.
+        var guide = 0.25
+        let peak = Double(series.compactMap { $0?.swap }.max() ?? 0) / 100
+        while guide * 1.5 < peak { guide *= 2 }
+        if guide < peak { guide *= 1.5 }
         func x(_ i: Int) -> CGFloat { x0 + w * CGFloat(i) / CGFloat(n - 1) }
-        func y(_ s: History.Slot) -> CGFloat { bottom + CGFloat(s.swap) / 100 / CGFloat(guide) * (top - bottom) }
+        func y(_ s: History.Slot) -> CGFloat { bottom + CGFloat(Double(s.swap) / 100 / guide) * (top - bottom) }
 
         // Guides: the bottom, the middle and the top (dotted).
         for g in 0...2 {
@@ -410,32 +420,7 @@ private final class HistoryView: NSView {
         }
         let caption = mono(Ink.caption, .regular, Ink.text, kern: 1)
 
-        // Gaps (no data): a faint hatched band across the plot and the lane, from the last point before to the
-        // first after (or the chart's edge).
-        var i = 0
-        while i < n {
-            guard series[i] == nil else { i += 1; continue }
-            var j = i
-            while j + 1 < n, series[j + 1] == nil { j += 1 }
-            let left = i == 0 ? x0 : x(i - 1), right = j == n - 1 ? x0 + w : x(j + 1)
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: NSRect(x: left, y: bottom, width: right - left, height: h - 4 - bottom)).addClip()
-            let hatch = NSBezierPath()
-            var hx = left - (h - bottom)
-            while hx < right {
-                hatch.move(to: NSPoint(x: hx, y: bottom))
-                hatch.line(to: NSPoint(x: hx + (h - 4 - bottom), y: h - 4))
-                hx += 5
-            }
-            hatch.lineWidth = 0.6
-            Ink.text.withAlphaComponent(0.09).setStroke()
-            hatch.stroke()
-            NSGraphicsContext.restoreGraphicsState()
-            i = j + 1
-        }
-
-        // Swap: one line with a fill per stretch with data. Where nothing was recorded (the app wasn't running)
-        // the plot and lane carry a faint hatched band instead of a line.
+        // Swap: one line with a fill. History fills every gap, so it only starts late on a fresh install.
         var run: [NSPoint] = []
         func finishRun() {
             defer { run.removeAll() }
