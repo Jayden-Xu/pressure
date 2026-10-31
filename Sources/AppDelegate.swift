@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Swap and level into the 24 h history; called on the monitor's existing 10 s check, display on or off.
-    /// Sleep leaves no gap either: History fills the slots slept through. Only quitting or shutting down does.
+    /// Nothing leaves a gap: History fills slots missed (asleep, off, app quit) with the last reading.
     private func sample() {
         history.record(swapBytes: FootprintScanner.swapUsedBytes(), level: monitor.level)
     }
@@ -196,7 +196,7 @@ private extension PressureLevel {
     static let lit = NSColor.labelColor.withAlphaComponent(litAlpha)
     static let unlit = NSColor.labelColor.withAlphaComponent(litAlpha * unlitAlpha)
     /// The pressure lane above the chart: all cells the same height, the worse the level the darker; a cell
-    /// with no data (the app wasn't running) is left empty, with a hatched band across the gap like the chart's.
+    /// with no data (only before the first reading ever) is left empty.
     static let normal = NSColor.labelColor.withAlphaComponent(0.13)
     static let warning = NSColor.labelColor.withAlphaComponent(0.30)
     static let critical = NSColor.labelColor.withAlphaComponent(0.52)
@@ -420,32 +420,7 @@ private final class HistoryView: NSView {
         }
         let caption = mono(Ink.caption, .regular, Ink.text, kern: 1)
 
-        // Gaps (no data): a faint hatched band across the plot and the lane, from the last point before to the
-        // first after (or the chart's edge).
-        var i = 0
-        while i < n {
-            guard series[i] == nil else { i += 1; continue }
-            var j = i
-            while j + 1 < n, series[j + 1] == nil { j += 1 }
-            let left = i == 0 ? x0 : x(i - 1), right = j == n - 1 ? x0 + w : x(j + 1)
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: NSRect(x: left, y: bottom, width: right - left, height: h - 4 - bottom)).addClip()
-            let hatch = NSBezierPath()
-            var hx = left - (h - bottom)
-            while hx < right {
-                hatch.move(to: NSPoint(x: hx, y: bottom))
-                hatch.line(to: NSPoint(x: hx + (h - 4 - bottom), y: h - 4))
-                hx += 5
-            }
-            hatch.lineWidth = 0.6
-            Ink.text.withAlphaComponent(0.09).setStroke()
-            hatch.stroke()
-            NSGraphicsContext.restoreGraphicsState()
-            i = j + 1
-        }
-
-        // Swap: one line with a fill per stretch with data. Where nothing was recorded (the app wasn't running)
-        // the plot and lane carry a faint hatched band instead of a line.
+        // Swap: one line with a fill. History fills every gap, so it only starts late on a fresh install.
         var run: [NSPoint] = []
         func finishRun() {
             defer { run.removeAll() }

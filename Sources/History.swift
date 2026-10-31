@@ -3,8 +3,8 @@ import Foundation
 /// The last 24 h of swap and memory pressure, one slot per 3 min, kept as a ring: a time's slot is
 /// `id % count`, so the newest sample overwrites the one 24 h older and the stored data never grows.
 /// Fed by the 10 s pressure check that already runs (no timer of its own); a slot keeps its highest
-/// swap and highest level. Nothing runs while the Mac sleeps, so on wake the slots slept through are filled
-/// with the reading from before it: the chart only breaks where the app wasn't running (quit, shut down).
+/// swap and highest level. Nothing is recorded while the Mac sleeps, is off, or the app isn't running; the
+/// series carries the last slot before such a gap across it, so the chart never breaks.
 /// Held in memory, which is what the menu draws from, and written once an hour (on the hour), plus on sleep and quit:
 /// each write costs a wakeup, so fewer and bigger. A crash or power loss costs at most the last hour.
 @MainActor
@@ -20,8 +20,6 @@ final class History {
     private var ring = [Slot](repeating: Slot(), count: count)
     private let defaults = UserDefaults.standard
     private var dirty = false
-    /// The newest reading of this run. In memory only, so a gap from before launch stays a gap.
-    private var last: Slot?
 
     init() {
         guard let flat = defaults.array(forKey: "history") as? [Int], flat.count == Self.count * 3 else { return }
@@ -33,14 +31,6 @@ final class History {
     func record(swapBytes: UInt64, level: PressureLevel) {
         let id = Self.id(of: Date()), i = id % Self.count
         let reading = Slot(id: id, swap: Int((Double(swapBytes) / 1_073_741_824 * 100).rounded()), level: level.rawValue)
-        // Slots skipped since the last reading of this run were slept through (the 10 s check doesn't fire
-        // while asleep): they keep the swap and level from before the sleep. At most the 24 h the ring holds.
-        if let last, id > last.id + 1 {
-            for gap in max(last.id + 1, id - Self.count + 1)..<id {
-                ring[gap % Self.count] = Slot(id: gap, swap: last.swap, level: last.level)
-            }
-        }
-        last = reading
         if ring[i].id != id {
             if id % Self.flushEvery == 0 { flush() }
             ring[i] = Slot(id: id)
@@ -56,13 +46,16 @@ final class History {
         dirty = false
     }
 
-    /// The last 24 h, oldest first; nil where nothing was recorded (the app wasn't running or the Mac was off).
+    /// The last 24 h, oldest first. A slot with nothing recorded (asleep, off, app not running) carries the
+    /// slot before it, also from before the window; nil only before the very first reading (a fresh install).
     func series() -> [Slot?] {
-        let newest = Self.id(of: Date())
-        return (0..<Self.count).map { k in
-            let id = newest - Self.count + 1 + k
+        let newest = Self.id(of: Date()), first = newest - Self.count + 1
+        // The newest slot older than the window, to carry into its start.
+        var carry = ring.filter { $0.id >= 0 && $0.id < first }.max { $0.id < $1.id }
+        return (first...newest).map { id in
             let slot = ring[id % Self.count]
-            return slot.id == id ? slot : nil
+            if slot.id == id { carry = slot }
+            return carry
         }
     }
 }
