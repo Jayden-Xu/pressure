@@ -44,6 +44,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.history.flush() }
         }
+        // On wake, record at once (which also fills the slots slept through) instead of waiting for the next check.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.monitor.refresh()
+                self?.sample()
+            }
+        }
         monitor.onTick = { [weak self] in MainActor.assumeIsolated { self?.sample() } }
         showIcon(for: monitor.level)
         sample()
@@ -59,11 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         history.flush()
     }
 
-    /// Swap and level into the 24 h history; called on the monitor's existing 10 s check.
-    /// Skipped while the display is off: a lid-closed Mac still wakes for ~1 min every ~15 min (Power Nap
-    /// DarkWake, which posts no didWake) and those readings would dot the sleep gap.
+    /// Swap and level into the 24 h history; called on the monitor's existing 10 s check, display on or off.
+    /// Sleep leaves no gap either: History fills the slots slept through. Only quitting or shutting down does.
     private func sample() {
-        guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
         history.record(swapBytes: FootprintScanner.swapUsedBytes(), level: monitor.level)
     }
 
@@ -84,16 +89,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor.refresh()
         sample()
         let entries = FootprintScanner.topEntries(limit: Self.topN)
+        let used = FootprintScanner.usedMemoryBytes()
 
         // Titles start 16 pt in, or 24 pt once any item shows a checkmark (the state column).
         // Separators always end 16 pt from the right. The hand-drawn rows follow the titles.
         let loginOn = SMAppService.mainApp.status == .enabled
         let inset: CGFloat = loginOn ? 24 : 16
 
-        // App bars: the biggest app is a full bar, the others the square root of their size relative to it,
-        // so small apps stay readable next to a big one.
-        let biggest = Double(entries.first?.bytes ?? 1)
-        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: (Double($0.bytes) / biggest).squareRoot()) }
+        // App bars: each app's share of the memory in use (Activity Monitor's Memory Used), so a full bar
+        // would be an app holding all of it.
+        let whole = Double(max(used, entries.first?.bytes ?? 1))
+        let rows = entries.map { (label: $0.name, value: gb($0.bytes), share: min(1, Double($0.bytes) / whole)) }
         let layout = RowView.Layout(rows.map { ($0.label, $0.value) }, inset: inset)
 
         menu.removeAllItems()
@@ -284,7 +290,7 @@ private final class RowView: NSView {
     /// Separators end this far from the right edge; values end there too.
     static let trailing: CGFloat = 16
     static let height: CGFloat = 36
-    /// Bar: 60 thin segments, so one segment is 1.7% of physical memory.
+    /// Bar: 60 thin segments, so one segment is 1.7% of the memory in use.
     static let segments = 60, segmentGap: CGFloat = 1, barHeight: CGFloat = 3
 
     // Built once, not on every draw.
